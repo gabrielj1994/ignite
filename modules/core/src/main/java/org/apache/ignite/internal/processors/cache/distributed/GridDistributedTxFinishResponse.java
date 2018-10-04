@@ -165,19 +165,19 @@ public class GridDistributedTxFinishResponse extends GridCacheMessage implements
 
         switch (writer.state()) {
             case 2:
-                if (!writer.writeByte("flags", flags))
+                if (!writer.writeMessage("eventsTrace", eventsTrace))
                     return false;
 
                 writer.incrementState();
 
             case 3:
-                if (!writer.writeIgniteUuid("futId", futId))
+                if (!writer.writeByte("flags", flags))
                     return false;
 
                 writer.incrementState();
 
             case 4:
-                if (!writer.writeMessage("eventsTrace", eventsTrace))
+                if (!writer.writeIgniteUuid("futId", futId))
                     return false;
 
                 writer.incrementState();
@@ -211,7 +211,7 @@ public class GridDistributedTxFinishResponse extends GridCacheMessage implements
 
         switch (reader.state()) {
             case 2:
-                flags = reader.readByte("flags");
+                eventsTrace = reader.readMessage("eventsTrace");
 
                 if (!reader.isLastRead())
                     return false;
@@ -219,7 +219,7 @@ public class GridDistributedTxFinishResponse extends GridCacheMessage implements
                 reader.incrementState();
 
             case 3:
-                futId = reader.readIgniteUuid("futId");
+                flags = reader.readByte("flags");
 
                 if (!reader.isLastRead())
                     return false;
@@ -227,7 +227,7 @@ public class GridDistributedTxFinishResponse extends GridCacheMessage implements
                 reader.incrementState();
 
             case 4:
-                eventsTrace = reader.readMessage("eventsTrace");
+                futId = reader.readIgniteUuid("futId");
 
                 if (!reader.isLastRead())
                     return false;

@@ -545,19 +545,19 @@ public class GridDistributedTxPrepareRequest extends GridDistributedBaseMessage
                 writer.incrementState();
 
             case 10:
-                if (!writer.writeByte("flags", flags))
+                if (!writer.writeMessage("eventsTrace", eventsTrace))
                     return false;
 
                 writer.incrementState();
 
             case 11:
-                if (!writer.writeByte("isolation", isolation != null ? (byte)isolation.ordinal() : -1))
+                if (!writer.writeByte("flags", flags))
                     return false;
 
                 writer.incrementState();
 
             case 12:
-                if (!writer.writeMessage("eventsTrace", eventsTrace))
+                if (!writer.writeByte("isolation", isolation != null ? (byte)isolation.ordinal() : -1))
                     return false;
 
                 writer.incrementState();
@@ -655,7 +655,7 @@ public class GridDistributedTxPrepareRequest extends GridDistributedBaseMessage
                 reader.incrementState();
 
             case 10:
-                flags = reader.readByte("flags");
+                eventsTrace = reader.readMessage("eventsTrace");
 
                 if (!reader.isLastRead())
                     return false;
@@ -663,6 +663,14 @@ public class GridDistributedTxPrepareRequest extends GridDistributedBaseMessage
                 reader.incrementState();
 
             case 11:
+                flags = reader.readByte("flags");
+
+                if (!reader.isLastRead())
+                    return false;
+
+                reader.incrementState();
+
+            case 12:
                 byte isolationOrd;
 
                 isolationOrd = reader.readByte("isolation");
@@ -671,14 +679,6 @@ public class GridDistributedTxPrepareRequest extends GridDistributedBaseMessage
                     return false;
 
                 isolation = TransactionIsolation.fromOrdinal(isolationOrd);
-
-                reader.incrementState();
-
-            case 12:
-                eventsTrace = reader.readMessage("eventsTrace");
-
-                if (!reader.isLastRead())
-                    return false;
 
                 reader.incrementState();
 

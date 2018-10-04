@@ -217,13 +217,13 @@ public class GridDistributedTxPrepareResponse extends GridDistributedBaseMessage
                 writer.incrementState();
 
             case 8:
-                if (!writer.writeByte("flags", flags))
+                if (!writer.writeMessage("eventsTrace", eventsTrace))
                     return false;
 
                 writer.incrementState();
 
             case 9:
-                if (!writer.writeMessage("eventsTrace", eventsTrace))
+                if (!writer.writeByte("flags", flags))
                     return false;
 
                 writer.incrementState();
@@ -259,7 +259,7 @@ public class GridDistributedTxPrepareResponse extends GridDistributedBaseMessage
                 reader.incrementState();
 
             case 8:
-                flags = reader.readByte("flags");
+                eventsTrace = reader.readMessage("eventsTrace");
 
                 if (!reader.isLastRead())
                     return false;
@@ -267,7 +267,7 @@ public class GridDistributedTxPrepareResponse extends GridDistributedBaseMessage
                 reader.incrementState();
 
             case 9:
-                eventsTrace = reader.readMessage("eventsTrace");
+                flags = reader.readByte("flags");
 
                 if (!reader.isLastRead())
                     return false;

@@ -365,25 +365,25 @@ public class GridDistributedTxFinishRequest extends GridDistributedBaseMessage
                 writer.incrementState();
 
             case 10:
-                if (!writer.writeByte("flags", flags))
+                if (!writer.writeMessage("eventsTrace", eventsTrace))
                     return false;
 
                 writer.incrementState();
 
             case 11:
-                if (!writer.writeIgniteUuid("futId", futId))
+                if (!writer.writeByte("flags", flags))
                     return false;
 
                 writer.incrementState();
 
             case 12:
-                if (!writer.writeBoolean("invalidate", invalidate))
+                if (!writer.writeIgniteUuid("futId", futId))
                     return false;
 
                 writer.incrementState();
 
             case 13:
-                if (!writer.writeMessage("eventsTrace", eventsTrace))
+                if (!writer.writeBoolean("invalidate", invalidate))
                     return false;
 
                 writer.incrementState();
@@ -477,7 +477,7 @@ public class GridDistributedTxFinishRequest extends GridDistributedBaseMessage
                 reader.incrementState();
 
             case 10:
-                flags = reader.readByte("flags");
+                eventsTrace = reader.readMessage("eventsTrace");
 
                 if (!reader.isLastRead())
                     return false;
@@ -485,7 +485,7 @@ public class GridDistributedTxFinishRequest extends GridDistributedBaseMessage
                 reader.incrementState();
 
             case 11:
-                futId = reader.readIgniteUuid("futId");
+                flags = reader.readByte("flags");
 
                 if (!reader.isLastRead())
                     return false;
@@ -493,7 +493,7 @@ public class GridDistributedTxFinishRequest extends GridDistributedBaseMessage
                 reader.incrementState();
 
             case 12:
-                invalidate = reader.readBoolean("invalidate");
+                futId = reader.readIgniteUuid("futId");
 
                 if (!reader.isLastRead())
                     return false;
@@ -501,7 +501,7 @@ public class GridDistributedTxFinishRequest extends GridDistributedBaseMessage
                 reader.incrementState();
 
             case 13:
-                eventsTrace = reader.readMessage("eventsTrace");
+                invalidate = reader.readBoolean("invalidate");
 
                 if (!reader.isLastRead())
                     return false;
