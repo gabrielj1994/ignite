@@ -251,12 +251,18 @@ public class GridDistributedLockResponse extends GridDistributedBaseMessage impl
                 writer.incrementState();
 
             case 8:
-                if (!writer.writeIgniteUuid("futId", futId))
+                if (!writer.writeMessage("evtsTrace", evtsTrace))
                     return false;
 
                 writer.incrementState();
 
             case 9:
+                if (!writer.writeIgniteUuid("futId", futId))
+                    return false;
+
+                writer.incrementState();
+
+            case 10:
                 if (!writer.writeCollection("vals", vals, MessageCollectionItemType.MSG))
                     return false;
 
@@ -287,7 +293,7 @@ public class GridDistributedLockResponse extends GridDistributedBaseMessage impl
                 reader.incrementState();
 
             case 8:
-                futId = reader.readIgniteUuid("futId");
+                evtsTrace = reader.readMessage("evtsTrace");
 
                 if (!reader.isLastRead())
                     return false;
@@ -295,6 +301,14 @@ public class GridDistributedLockResponse extends GridDistributedBaseMessage impl
                 reader.incrementState();
 
             case 9:
+                futId = reader.readIgniteUuid("futId");
+
+                if (!reader.isLastRead())
+                    return false;
+
+                reader.incrementState();
+
+            case 10:
                 vals = reader.readCollection("vals", MessageCollectionItemType.MSG);
 
                 if (!reader.isLastRead())
@@ -314,7 +328,7 @@ public class GridDistributedLockResponse extends GridDistributedBaseMessage impl
 
     /** {@inheritDoc} */
     @Override public byte fieldsCount() {
-        return 10;
+        return 11;
     }
 
     /** {@inheritDoc} */

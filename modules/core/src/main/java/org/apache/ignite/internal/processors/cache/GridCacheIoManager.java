@@ -729,7 +729,8 @@ public class GridCacheIoManager extends GridCacheSharedManagerAdapter {
                     req.futureId(),
                     req.miniId(),
                     0,
-                    false);
+                    false,
+                    req.nodeTrace());
 
                 sendResponseOnFailedMessage(nodeId, res, cctx, plc);
             }
@@ -865,7 +866,8 @@ public class GridCacheIoManager extends GridCacheSharedManagerAdapter {
                     0,
                     req.classError(),
                     null,
-                    false);
+                    false,
+                    req.nodeTrace());
 
                 sendResponseOnFailedMessage(nodeId, res, cctx, plc);
             }
