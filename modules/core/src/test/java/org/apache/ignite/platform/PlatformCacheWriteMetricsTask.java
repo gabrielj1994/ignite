@@ -405,6 +405,16 @@ public class PlatformCacheWriteMetricsTask extends ComputeTaskAdapter<Long, Obje
         }
 
         /** {@inheritDoc} */
+        @Override public boolean isValidForReading() {
+            return true;
+        }
+
+        /** {@inheritDoc} */
+        @Override public boolean isValidForWriting() {
+            return true;
+        }
+
+        /** {@inheritDoc} */
         @Override public int getTotalPartitionsCount() {
             return 54;
         }
@@ -433,6 +443,100 @@ public class PlatformCacheWriteMetricsTask extends ComputeTaskAdapter<Long, Obje
         @Override public long getHeapEntriesCount() {
             return 59;
         }
+
+        /** {@inheritDoc} */
+        @Override public long estimateRebalancingFinishTime() {
+            return 60;
+        }
+
+        /** {@inheritDoc} */
+        @Override public long rebalancingStartTime() {
+            return 61;
+        }
+
+        /** {@inheritDoc} */
+        @Override public long getEstimatedRebalancingFinishTime() {
+            return 62;
+        }
+
+        /** {@inheritDoc} */
+        @Override public long getRebalancingStartTime() {
+            return 63;
+        }
+
+        /** {@inheritDoc} */
+        @Override public long getRebalanceClearingPartitionsLeft() {
+            return 64;
+        }
+
+        /** {@inheritDoc} */
+        @Override public long getCacheSize() {
+            return 65;
+        }
+
+        /** {@inheritDoc} */
+        @Override public long getRebalancedKeys() {
+            return 66;
+        }
+
+        /** {@inheritDoc} */
+        @Override public long getEstimatedRebalancingKeys() {
+            return 67;
+        }
+
+        /** {@inheritDoc} */
+        @Override public long getEntryProcessorPuts() {
+            return 68;
+        }
+
+        /** {@inheritDoc} */
+        @Override public long getEntryProcessorReadOnlyInvocations() {
+            return 69;
+        }
+
+        /** {@inheritDoc} */
+        @Override public long getEntryProcessorInvocations() {
+            return 70;
+        }
+
+        /** {@inheritDoc} */
+        @Override public long getEntryProcessorHits() {
+            return 71;
+        }
+
+        /** {@inheritDoc} */
+        @Override public float getEntryProcessorHitPercentage() {
+            return 72;
+        }
+
+        /** {@inheritDoc} */
+        @Override public float getEntryProcessorMissPercentage() {
+            return 73;
+        }
+
+        /** {@inheritDoc} */
+        @Override public long getEntryProcessorMisses() {
+            return 74;
+        }
+
+        /** {@inheritDoc} */
+        @Override public float getEntryProcessorAverageInvocationTime() {
+            return 75;
+        }
+
+        /** {@inheritDoc} */
+        @Override public float getEntryProcessorMinInvocationTime() {
+            return 76;
+        }
+
+        /** {@inheritDoc} */
+        @Override public float getEntryProcessorMaxInvocationTime() {
+            return 77;
+        }
+
+        /** {@inheritDoc} */
+        @Override public long getEntryProcessorRemovals() {
+            return 78;
+        }
     }
 }
-

@@ -23,23 +23,25 @@ import java.nio.channels.SelectionKey;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.internal.util.tostring.GridToStringExclude;
 import org.apache.ignite.internal.util.typedef.internal.LT;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.jetbrains.annotations.Nullable;
-import org.jsr166.ConcurrentLinkedDeque8;
+import org.apache.ignite.util.deque.FastSizeDeque;
 
 /**
  * Session implementation bound to selector API and socket API.
  * Note that this implementation requires non-null values for local and remote
  * socket addresses.
  */
-class GridSelectorNioSessionImpl extends GridNioSessionImpl {
+class GridSelectorNioSessionImpl extends GridNioSessionImpl implements GridNioKeyAttachment {
     /** Pending write requests. */
-    private final ConcurrentLinkedDeque8<SessionWriteRequest> queue = new ConcurrentLinkedDeque8<>();
+    private final FastSizeDeque<SessionWriteRequest> queue = new FastSizeDeque<>(new ConcurrentLinkedDeque<>());
 
     /** Selection key associated with this session. */
     @GridToStringExclude
@@ -127,6 +129,16 @@ class GridSelectorNioSessionImpl extends GridNioSessionImpl {
 
             this.readBuf = readBuf;
         }
+    }
+
+    /** {@inheritDoc} */
+    @Override public boolean hasSession() {
+        return true;
+    }
+
+    /** {@inheritDoc} */
+    @Nullable @Override public GridSelectorNioSessionImpl session() {
+        return this;
     }
 
     /**
@@ -366,6 +378,8 @@ class GridSelectorNioSessionImpl extends GridNioSessionImpl {
         assert recoveryDesc != null;
 
         outRecovery = recoveryDesc;
+
+        outRecovery.session(this);
     }
 
     /** {@inheritDoc} */
@@ -383,22 +397,6 @@ class GridSelectorNioSessionImpl extends GridNioSessionImpl {
     /** {@inheritDoc} */
     @Nullable @Override public GridNioRecoveryDescriptor inRecoveryDescriptor() {
         return inRecovery;
-    }
-
-    /** {@inheritDoc} */
-    @Override public <T> T addMeta(int key, @Nullable T val) {
-        if (!accepted() && val instanceof GridNioRecoveryDescriptor) {
-            outRecovery = (GridNioRecoveryDescriptor)val;
-
-            if (!outRecovery.pairedConnections())
-                inRecovery = outRecovery;
-
-            outRecovery.onConnected();
-
-            return null;
-        }
-        else
-            return super.addMeta(key, val);
     }
 
     /**
@@ -439,6 +437,26 @@ class GridSelectorNioSessionImpl extends GridNioSessionImpl {
         sysMsg = null;
 
         return ret;
+    }
+
+    /** {@inheritDoc} */
+    @Override public GridNioFuture<Boolean> close() {
+        GridNioFuture<Boolean> fut = super.close();
+
+        if (!fut.isDone()) {
+            fut.listen(fut0 -> {
+                try {
+                    fut0.get();
+                }
+                catch (IgniteCheckedException e) {
+                    log.error("Failed to close session [ses=" + GridSelectorNioSessionImpl.this + ']', e);
+                }
+            });
+        }
+        else if (fut.error() != null)
+            log.error("Failed to close session [ses=" + GridSelectorNioSessionImpl.this + ']', fut.error());
+
+        return fut;
     }
 
     /** {@inheritDoc} */

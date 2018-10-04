@@ -17,9 +17,6 @@
 
 import angular from 'angular';
 
-
-import IgniteVersion from './Version.service';
-
 import IgniteClusterDefaults from './generator/defaults/Cluster.service';
 import IgniteClusterPlatformDefaults from './generator/defaults/Cluster.platform.service';
 import IgniteCacheDefaults from './generator/defaults/Cache.service';
@@ -45,12 +42,11 @@ angular
 .module('ignite-console.configuration', [
 
 ])
-.service('IgniteConfigurationGenerator', () => IgniteConfigurationGenerator)
+.service('IgniteConfigurationGenerator', function() { return IgniteConfigurationGenerator;})
 .service('IgnitePlatformGenerator', IgnitePlatformGenerator)
-.service('SpringTransformer', () => IgniteSpringTransformer)
-.service('JavaTransformer', () => IgniteJavaTransformer)
+.service('SpringTransformer', function() { return IgniteSpringTransformer;})
+.service('JavaTransformer', function() { return IgniteJavaTransformer;})
 .service('IgniteSharpTransformer', SharpTransformer)
-.service('IgniteVersion', IgniteVersion)
 .service('IgniteEventGroups', IgniteEventGroups)
 .service('IgniteClusterDefaults', IgniteClusterDefaults)
 .service('IgniteClusterPlatformDefaults', IgniteClusterPlatformDefaults)

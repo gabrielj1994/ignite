@@ -21,9 +21,11 @@ import java.util.List;
 import org.apache.ignite.binary.BinaryObjectException;
 import org.apache.ignite.internal.binary.BinaryReaderExImpl;
 import org.apache.ignite.internal.binary.BinaryWriterExImpl;
+import org.apache.ignite.internal.processors.odbc.ClientListenerProtocolVersion;
+import org.apache.ignite.internal.util.typedef.internal.S;
 
 /**
- * SQL listener query execute result.
+ * JDBC query execute result.
  */
 public class JdbcQueryExecuteResult extends JdbcResult {
     /** Query ID. */
@@ -44,7 +46,7 @@ public class JdbcQueryExecuteResult extends JdbcResult {
     /**
      * Condtructor.
      */
-    public JdbcQueryExecuteResult() {
+    JdbcQueryExecuteResult() {
         super(QRY_EXEC);
     }
 
@@ -53,7 +55,7 @@ public class JdbcQueryExecuteResult extends JdbcResult {
      * @param items Query result rows.
      * @param last Flag indicates the query has no unfetched results.
      */
-    public JdbcQueryExecuteResult(long queryId, List<List<Object>> items, boolean last) {
+    JdbcQueryExecuteResult(long queryId, List<List<Object>> items, boolean last) {
         super(QRY_EXEC);
 
         this.queryId = queryId;
@@ -111,8 +113,9 @@ public class JdbcQueryExecuteResult extends JdbcResult {
     }
 
     /** {@inheritDoc} */
-    @Override public void writeBinary(BinaryWriterExImpl writer) throws BinaryObjectException {
-        super.writeBinary(writer);
+    @Override public void writeBinary(BinaryWriterExImpl writer,
+        ClientListenerProtocolVersion ver) throws BinaryObjectException {
+        super.writeBinary(writer, ver);
 
         writer.writeLong(queryId);
         writer.writeBoolean(isQuery);
@@ -130,8 +133,9 @@ public class JdbcQueryExecuteResult extends JdbcResult {
 
 
     /** {@inheritDoc} */
-    @Override public void readBinary(BinaryReaderExImpl reader) throws BinaryObjectException {
-        super.readBinary(reader);
+    @Override public void readBinary(BinaryReaderExImpl reader,
+        ClientListenerProtocolVersion ver) throws BinaryObjectException {
+        super.readBinary(reader, ver);
 
         queryId = reader.readLong();
         isQuery = reader.readBoolean();
@@ -146,5 +150,10 @@ public class JdbcQueryExecuteResult extends JdbcResult {
 
             updateCnt = reader.readLong();
         }
+    }
+
+    /** {@inheritDoc} */
+    @Override public String toString() {
+        return S.toString(JdbcQueryExecuteResult.class, this);
     }
 }

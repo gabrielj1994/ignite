@@ -1658,20 +1658,6 @@ public interface IgniteInternalCache<K, V> extends Iterable<Cache.Entry<K, V>> {
     public long igfsDataSpaceUsed();
 
     /**
-     * Checks whether this cache is Mongo data cache.
-     *
-     * @return {@code True} if this cache is mongo data cache.
-     */
-    public boolean isMongoDataCache();
-
-    /**
-     * Checks whether this cache is Mongo meta cache.
-     *
-     * @return {@code True} if this cache is mongo meta cache.
-     */
-    public boolean isMongoMetaCache();
-
-    /**
      * @param keepBinary Keep binary flag.
      * @param p Optional key/value predicate.
      * @return Scan query iterator.
@@ -1695,6 +1681,11 @@ public interface IgniteInternalCache<K, V> extends Iterable<Cache.Entry<K, V>> {
      * @return Cache with no-retries behavior enabled.
      */
     public IgniteInternalCache<K, V> withNoRetries();
+
+    /**
+     * @return New projection based on this one, but with atomic cache operations allowed to be used.
+     */
+    public <K1, V1> IgniteInternalCache<K1, V1> withAllowAtomicOpsInTx();
 
     /**
      * @param key Key.
@@ -1808,15 +1799,6 @@ public interface IgniteInternalCache<K, V> extends Iterable<Cache.Entry<K, V>> {
      * @return Future to be completed whenever loading completes.
      */
     public IgniteInternalFuture<?> localLoadCacheAsync(@Nullable IgniteBiPredicate<K, V> p, @Nullable Object... args);
-
-    /**
-     * Gets value without waiting for toplogy changes.
-     *
-     * @param key Key.
-     * @return Value.
-     * @throws IgniteCheckedException If failed.
-     */
-    public V getTopologySafe(K key) throws IgniteCheckedException;
 
     /**
      * @param topVer Locked topology version.

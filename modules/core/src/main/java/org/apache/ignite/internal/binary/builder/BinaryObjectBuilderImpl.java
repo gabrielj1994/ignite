@@ -36,6 +36,7 @@ import org.apache.ignite.internal.binary.BinaryUtils;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiTuple;
+import org.apache.ignite.thread.IgniteThread;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Collection;
@@ -157,7 +158,7 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
                 throw new BinaryInvalidTypeException("Failed to load the class: " + clsNameToWrite, e);
             }
 
-            this.typeId = ctx.descriptorForClass(cls, false).typeId();
+            this.typeId = ctx.descriptorForClass(cls, false, false).typeId();
 
             registeredType = false;
 
@@ -174,6 +175,12 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
     /** {@inheritDoc} */
     @Override public BinaryObject build() {
         try (BinaryWriterExImpl writer = new BinaryWriterExImpl(ctx)) {
+            Thread curThread = Thread.currentThread();
+
+            if (curThread instanceof IgniteThread)
+                writer.failIfUnregistered(((IgniteThread)curThread).executingEntryProcessor() &&
+                    ((IgniteThread)curThread).holdsTopLock());
+
             writer.typeId(typeId);
 
             BinaryBuilderSerializer serializationCtx = new BinaryBuilderSerializer();
@@ -357,8 +364,10 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
                 if (affFieldName0 == null)
                     affFieldName0 = ctx.affinityKeyFieldName(typeId);
 
+                ctx.registerUserClassName(typeId, typeName);
+
                 ctx.updateMetadata(typeId, new BinaryMetadata(typeId, typeName, fieldsMeta, affFieldName0,
-                    Collections.singleton(curSchema), false, null));
+                    Collections.singleton(curSchema), false, null), writer.failIfUnregistered());
 
                 schemaReg.addSchema(curSchema.schemaId(), curSchema);
             }
@@ -420,7 +429,8 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
         else if (!nullFieldVal) {
             String newFldTypeName = BinaryUtils.fieldTypeName(newFldTypeId);
 
-            if (!F.eq(newFldTypeName, oldFldTypeName)) {
+            if (!F.eq(newFldTypeName, oldFldTypeName) &&
+                !oldFldTypeName.equals(BinaryUtils.fieldTypeName(GridBinaryMarshaller.OBJ))) {
                 throw new BinaryObjectException(
                     "Wrong value has been set [" +
                         "typeName=" + (typeName == null ? meta.typeName() : typeName) +
@@ -547,15 +557,17 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
 
     /** {@inheritDoc} */
     @Override public BinaryObjectBuilder setField(String name, Object val0) {
-        Object val = val0 == null ? new BinaryValueWithType(BinaryUtils.typeByClass(Object.class), null) : val0;
+        Object val = assignedValues().get(name);
 
-        Object oldVal = assignedValues().put(name, val);
+        if (val instanceof BinaryValueWithType)
+            ((BinaryValueWithType)val).value(val0);
+        else {
+            Class valCls = (val == null) ? Object.class : val.getClass();
 
-        if (oldVal instanceof BinaryValueWithType && val0 != null) {
-            ((BinaryValueWithType)oldVal).value(val);
-
-            assignedValues().put(name, oldVal);
+            val = val0 == null ? new BinaryValueWithType(BinaryUtils.typeByClass(valCls), null) : val0;
         }
+
+        assignedValues().put(name, val);
 
         return this;
     }
@@ -578,9 +590,6 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
 
     /** {@inheritDoc} */
     @Override public BinaryObjectBuilder setField(String name, @Nullable BinaryObjectBuilder builder) {
-        if (builder == null)
-            return setField(name, null, Object.class);
-        else
             return setField(name, (Object)builder);
     }
 

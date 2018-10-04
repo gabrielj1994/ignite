@@ -112,6 +112,15 @@ public class GridH2ValueMessageFactory implements MessageFactory {
 
             case -54:
                 return new QueryTable();
+
+            case -55:
+                return new GridH2DmlRequest();
+
+            case -56:
+                return new GridH2DmlResponse();
+
+            case -57:
+                return new GridH2SelectForUpdateTxDetails();
         }
 
         return null;
@@ -120,14 +129,17 @@ public class GridH2ValueMessageFactory implements MessageFactory {
     /**
      * @param src Source values.
      * @param dst Destination collection.
+     * @param cnt Number of columns to actually send.
      * @return Destination collection.
      * @throws IgniteCheckedException If failed.
      */
-    public static Collection<Message> toMessages(Collection<Value[]> src, Collection<Message> dst)
+    public static Collection<Message> toMessages(Collection<Value[]> src, Collection<Message> dst, int cnt)
         throws IgniteCheckedException {
         for (Value[] row : src) {
-            for (Value val : row)
-                dst.add(toMessage(val));
+            assert row.length >= cnt;
+
+            for (int i = 0; i < cnt; i++)
+                dst.add(toMessage(row[i]));
         }
 
         return dst;

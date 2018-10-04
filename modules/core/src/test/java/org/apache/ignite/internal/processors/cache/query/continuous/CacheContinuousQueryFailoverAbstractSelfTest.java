@@ -74,7 +74,8 @@ import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.IgniteKernal;
 import org.apache.ignite.internal.managers.communication.GridIoMessage;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
-import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtPartitionTopology;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionTopology;
+import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.CachePartitionPartialCountersMap;
 import org.apache.ignite.internal.processors.continuous.GridContinuousHandler;
 import org.apache.ignite.internal.processors.continuous.GridContinuousMessage;
 import org.apache.ignite.internal.processors.continuous.GridContinuousProcessor;
@@ -519,11 +520,15 @@ public abstract class CacheContinuousQueryFailoverAbstractSelfTest extends GridC
 
             Affinity<Object> aff = grid(i).affinity(DEFAULT_CACHE_NAME);
 
-            Map<Integer, T2<Long, Long>> act = grid(i).cachex(DEFAULT_CACHE_NAME).context().topology().updateCounters(false);
+            CachePartitionPartialCountersMap act = grid(i).cachex(DEFAULT_CACHE_NAME).context().topology()
+                .localUpdateCounters(false);
 
             for (Map.Entry<Integer, Long> e : updCntrs.entrySet()) {
-                if (aff.mapPartitionToPrimaryAndBackups(e.getKey()).contains(grid(i).localNode()))
-                    assertEquals(e.getValue(), act.get(e.getKey()).get2());
+                if (aff.mapPartitionToPrimaryAndBackups(e.getKey()).contains(grid(i).localNode())) {
+                    int partIdx = act.partitionIndex(e.getKey());
+
+                    assertEquals(e.getValue(), (Long)act.updateCounterAt(partIdx));
+                }
             }
         }
     }
@@ -1461,7 +1466,7 @@ public abstract class CacheContinuousQueryFailoverAbstractSelfTest extends GridC
 
         assertTrue("Backup queue is not cleared: " + backupQueue(ignite(0)), backupQueue(ignite(0)).size() < BACKUP_ACK_THRESHOLD);
 
-        if (backupQueue(ignite(0)).size() != 0) {
+        if (!backupQueue(ignite(0)).isEmpty()) {
             for (Object o : backupQueue(ignite(0))) {
                 CacheContinuousQueryEntry e = (CacheContinuousQueryEntry)o;
 
@@ -2336,7 +2341,7 @@ public abstract class CacheContinuousQueryFailoverAbstractSelfTest extends GridC
      */
     private Thread nodeRestartThread(final int restartCycles, final long initDelay, final long restartDelay) {
         Thread t = new Thread(new Runnable() {
-            public void run() {
+            @Override public void run() {
                 sleep(initDelay);
 
                 try {

@@ -57,6 +57,8 @@ import org.apache.ignite.internal.util.typedef.X;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiTuple;
 import org.apache.ignite.lang.IgnitePredicate;
+import org.apache.ignite.lang.IgniteProductVersion;
+import org.apache.ignite.spi.discovery.tcp.internal.TcpDiscoveryNode;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.http.GridEmbeddedHttpServer;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
@@ -819,6 +821,59 @@ public class IgniteUtilsSelfTest extends GridCommonAbstractTest {
 
         x = composeString(0xFFFF / 4 + 1);
         checkString(x);
+    }
+
+    /**
+     *
+     */
+    public void testCeilPow2() throws Exception {
+        assertEquals(2, U.ceilPow2(2));
+        assertEquals(4, U.ceilPow2(3));
+        assertEquals(4, U.ceilPow2(4));
+        assertEquals(8, U.ceilPow2(5));
+        assertEquals(8, U.ceilPow2(6));
+        assertEquals(8, U.ceilPow2(7));
+        assertEquals(8, U.ceilPow2(8));
+        assertEquals(16, U.ceilPow2(9));
+        assertEquals(1 << 15, U.ceilPow2((1 << 15) - 1));
+        assertEquals(1 << 15, U.ceilPow2(1 << 15));
+        assertEquals(1 << 16, U.ceilPow2((1 << 15) + 1));
+        assertEquals(1 << 26, U.ceilPow2((1 << 26) - 100));
+        assertEquals(1 << 26, U.ceilPow2(1 << 26));
+        assertEquals(1 << 27, U.ceilPow2((1 << 26) + 100));
+
+        for (int i = (int)Math.pow(2, 30); i < Integer.MAX_VALUE; i++)
+            assertEquals((int)Math.pow(2, 30), U.ceilPow2(i));
+
+        for (int i = Integer.MIN_VALUE; i < 0; i++)
+            assertEquals(0, U.ceilPow2(i));
+    }
+
+    /**
+     *
+     */
+    public void testIsOldestNodeVersionAtLeast() {
+        IgniteProductVersion v240 = IgniteProductVersion.fromString("2.4.0");
+        IgniteProductVersion v241 = IgniteProductVersion.fromString("2.4.1");
+        IgniteProductVersion v250 = IgniteProductVersion.fromString("2.5.0");
+        IgniteProductVersion v250ts = IgniteProductVersion.fromString("2.5.0-b1-3");
+
+        TcpDiscoveryNode node240 = new TcpDiscoveryNode();
+        node240.version(v240);
+
+        TcpDiscoveryNode node241 = new TcpDiscoveryNode();
+        node241.version(v241);
+
+        TcpDiscoveryNode node250 = new TcpDiscoveryNode();
+        node250.version(v250);
+
+        TcpDiscoveryNode node250ts = new TcpDiscoveryNode();
+        node250ts.version(v250ts);
+
+        assertTrue(U.isOldestNodeVersionAtLeast(v240, Arrays.asList(node240, node241, node250, node250ts)));
+        assertFalse(U.isOldestNodeVersionAtLeast(v241, Arrays.asList(node240, node241, node250, node250ts)));
+        assertTrue(U.isOldestNodeVersionAtLeast(v250, Arrays.asList(node250, node250ts)));
+        assertTrue(U.isOldestNodeVersionAtLeast(v250ts, Arrays.asList(node250, node250ts)));
     }
 
     /**

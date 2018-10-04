@@ -21,6 +21,8 @@ import junit.framework.TestSuite;
 import org.apache.ignite.internal.processors.cache.BinarySerializationQuerySelfTest;
 import org.apache.ignite.internal.processors.cache.BinarySerializationQueryWithReflectiveSerializerSelfTest;
 import org.apache.ignite.internal.processors.cache.IgniteCacheBinaryObjectsScanSelfTest;
+import org.apache.ignite.internal.processors.cache.IgniteCacheBinaryObjectsScanWithEventsSelfTest;
+import org.apache.ignite.internal.processors.cache.BigEntryQueryTest;
 
 /**
  * Cache query suite with binary marshaller.
@@ -37,6 +39,8 @@ public class IgniteBinaryCacheQueryTestSuite extends TestSuite {
         suite.addTestSuite(BinarySerializationQuerySelfTest.class);
         suite.addTestSuite(BinarySerializationQueryWithReflectiveSerializerSelfTest.class);
         suite.addTestSuite(IgniteCacheBinaryObjectsScanSelfTest.class);
+        suite.addTestSuite(IgniteCacheBinaryObjectsScanWithEventsSelfTest.class);
+        suite.addTestSuite(BigEntryQueryTest.class);
 
         //Should be adjusted. Not ready to be used with BinaryMarshaller.
         //suite.addTestSuite(GridCacheBinarySwapScanQuerySelfTest.class);

@@ -15,32 +15,37 @@
  * limitations under the License.
  */
 
+import angular from 'angular';
+import _ from 'lodash';
 import templateUrl from 'views/templates/agent-download.tpl.pug';
 
 export default class AgentModal {
     static $inject = ['$rootScope', '$state', '$modal', 'IgniteMessages'];
 
+    /**
+     * @param {ng.IRootScopeService} $root
+     * @param {import('@uirouter/angularjs').StateService} $state
+     * @param {mgcrea.ngStrap.modal.IModalService} $modal
+     * @param {ReturnType<typeof import('app/services/Messages.service').default>} Messages
+     */
     constructor($root, $state, $modal, Messages) {
         const self = this;
 
-        self.$state = $state;
-        self.Messages = Messages;
+        this.$root = $root;
+        this.$state = $state;
+        this.Messages = Messages;
 
         // Pre-fetch modal dialogs.
-        self.modal = $modal({
+        this.modal = $modal({
             templateUrl,
             show: false,
             backdrop: 'static',
             keyboard: false,
-            controller: () => self,
+            controller() { return self;},
             controllerAs: 'ctrl'
         });
 
-        self.modal.$scope.$on('modal.hide.before', () => {
-            Messages.hideAlert();
-        });
-
-        $root.$on('user', (event, user) => self.user = user);
+        $root.$on('user', (event, user) => this.user = user);
     }
 
     hide() {
@@ -51,7 +56,11 @@ export default class AgentModal {
      * Close dialog and go by specified link.
      */
     back() {
+        this.Messages.hideAlert();
+
         this.hide();
+
+        _.forEach(angular.element('.modal'), (m) => angular.element(m).scope().$hide());
 
         if (this.backState)
             this.$state.go(this.backState);
@@ -62,14 +71,12 @@ export default class AgentModal {
      * @param {String} [backText]
      */
     agentDisconnected(backText, backState) {
-        const self = this;
+        this.backText = backText;
+        this.backState = backState;
 
-        self.backText = backText;
-        self.backState = backState;
+        this.status = 'agentMissing';
 
-        self.status = 'agentMissing';
-
-        self.modal.$promise.then(self.modal.show);
+        this.modal.$promise.then(() => this.modal.show());
     }
 
     /**
@@ -77,13 +84,15 @@ export default class AgentModal {
      * @param {String} [backText]
      */
     clusterDisconnected(backText, backState) {
-        const self = this;
+        this.backText = backText;
+        this.backState = backState;
 
-        self.backText = backText;
-        self.backState = backState;
+        this.status = 'nodeMissing';
 
-        self.status = 'nodeMissing';
+        this.modal.$promise.then(() => this.modal.show());
+    }
 
-        self.modal.$promise.then(self.modal.show);
+    get securityToken() {
+        return this.$root.user.becameToken || this.$root.user.token;
     }
 }

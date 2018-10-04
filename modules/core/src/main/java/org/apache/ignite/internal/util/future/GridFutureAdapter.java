@@ -22,6 +22,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 import java.util.concurrent.locks.LockSupport;
 import org.apache.ignite.IgniteCheckedException;
+import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.internal.IgniteFutureCancelledCheckedException;
 import org.apache.ignite.internal.IgniteFutureTimeoutCheckedException;
@@ -97,14 +98,15 @@ public class GridFutureAdapter<R> implements IgniteInternalFuture<R> {
     }
 
     /** */
-    private boolean ignoreInterrupts;
+    private volatile boolean ignoreInterrupts;
 
     /** */
     @GridToStringExclude
     private volatile Object state = INIT;
 
     /**
-     * Determines whether the future will ignore interrupts.
+     * Determines whether the future will ignore interrupts while waiting for result in {@code get()} methods.
+     * This call should <i>happen before</i> subsequent {@code get()} in order to have guaranteed effect.
      */
     public void ignoreInterrupts() {
         ignoreInterrupts = true;
@@ -155,7 +157,7 @@ public class GridFutureAdapter<R> implements IgniteInternalFuture<R> {
         A.ensure(timeout >= 0, "timeout cannot be negative: " + timeout);
         A.notNull(unit, "unit");
 
-        return get0(unit.toNanos(timeout));
+        return get0(ignoreInterrupts, unit.toNanos(timeout));
     }
 
     /**
@@ -179,7 +181,7 @@ public class GridFutureAdapter<R> implements IgniteInternalFuture<R> {
                     interrupted = true;
 
                     if (!ignoreInterrupts) {
-                        unregisterWaiter(Thread.currentThread());
+                        unregisterWaiter();
 
                         throw new IgniteInterruptedCheckedException("Got interrupted while waiting for future to complete.");
                     }
@@ -196,12 +198,13 @@ public class GridFutureAdapter<R> implements IgniteInternalFuture<R> {
     }
 
     /**
+     * @param ignoreInterrupts Whether to ignore interrupts.
      * @param nanosTimeout Timeout (nanoseconds).
      * @return Result.
      * @throws IgniteFutureTimeoutCheckedException If timeout reached before computation completed.
      * @throws IgniteCheckedException If error occurred.
      */
-    @Nullable private R get0(long nanosTimeout) throws IgniteCheckedException {
+    @Nullable private R get0(boolean ignoreInterrupts, long nanosTimeout) throws IgniteCheckedException {
         if (isDone() || !registerWaiter(Thread.currentThread()))
             return resolve();
 
@@ -221,7 +224,7 @@ public class GridFutureAdapter<R> implements IgniteInternalFuture<R> {
                     interrupted = true;
 
                     if (!ignoreInterrupts) {
-                        unregisterWaiter(Thread.currentThread());
+                        unregisterWaiter();
 
                         throw new IgniteInterruptedCheckedException("Got interrupted while waiting for future to complete.");
                     }
@@ -236,7 +239,7 @@ public class GridFutureAdapter<R> implements IgniteInternalFuture<R> {
                 Thread.currentThread().interrupt();
         }
 
-        unregisterWaiter(Thread.currentThread());
+        unregisterWaiter();
 
         throw new IgniteFutureTimeoutCheckedException("Timeout was reached before computation completed.");
     }
@@ -283,9 +286,9 @@ public class GridFutureAdapter<R> implements IgniteInternalFuture<R> {
     }
 
     /**
-     * @param waiter Waiter to unregister.
+     * Unregisters current thread from waiters list.
      */
-    private void unregisterWaiter(Thread waiter) {
+    private void unregisterWaiter() {
         Node prev = null;
         Object cur = state;
 
@@ -296,7 +299,7 @@ public class GridFutureAdapter<R> implements IgniteInternalFuture<R> {
             Object curWaiter = ((Node)cur).val;
             Node next = ((Node)cur).next;
 
-            if (curWaiter == waiter) {
+            if (curWaiter == Thread.currentThread()) {
                 if (prev == null) {
                     Object n = next == null ? INIT : next;
 
@@ -496,6 +499,21 @@ public class GridFutureAdapter<R> implements IgniteInternalFuture<R> {
                 return true;
             }
         }
+    }
+
+    /**
+     * Resets future for subsequent reuse.
+     */
+    public void reset() {
+        final Object oldState = state;
+
+        if (oldState == INIT)
+            return;
+
+        if (!isDone(oldState))
+            throw new IgniteException("Illegal state");
+
+        compareAndSetState(oldState, INIT);
     }
 
     /**

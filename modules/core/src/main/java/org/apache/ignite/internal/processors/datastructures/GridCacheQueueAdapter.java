@@ -406,7 +406,7 @@ public abstract class GridCacheQueueAdapter<T> extends AbstractCollection<T> imp
     }
 
     /** {@inheritDoc} */
-    public void affinityRun(IgniteRunnable job) {
+    @Override public void affinityRun(IgniteRunnable job) {
         if (!collocated)
             throw new IgniteException("Failed to execute affinityRun() for non-collocated queue: " + name() +
                 ". This operation is supported only for collocated queues.");
@@ -415,7 +415,7 @@ public abstract class GridCacheQueueAdapter<T> extends AbstractCollection<T> imp
     }
 
     /** {@inheritDoc} */
-    public <R> R affinityCall(IgniteCallable<R> job) {
+    @Override public <R> R affinityCall(IgniteCallable<R> job) {
         if (!collocated)
             throw new IgniteException("Failed to execute affinityCall() for non-collocated queue: " + name() +
                 ". This operation is supported only for collocated queues.");
@@ -477,6 +477,11 @@ public abstract class GridCacheQueueAdapter<T> extends AbstractCollection<T> imp
     protected final void checkRemoved(@Nullable GridCacheQueueHeader hdr) {
         if (queueRemoved(hdr, id))
             onRemoved(true);
+    }
+
+    /** Release all semaphores used in blocking operations in case of client disconnect. */
+    public void onClientDisconnected() {
+        releaseSemaphores();
     }
 
     /**

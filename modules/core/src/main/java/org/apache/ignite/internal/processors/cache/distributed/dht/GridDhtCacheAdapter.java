@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import javax.cache.Cache;
 import javax.cache.expiry.ExpiryPolicy;
@@ -61,12 +62,17 @@ import org.apache.ignite.internal.processors.cache.distributed.dht.colocated.Gri
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtForceKeysFuture;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtForceKeysRequest;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtForceKeysResponse;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtInvalidPartitionException;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionTopology;
 import org.apache.ignite.internal.processors.cache.distributed.near.CacheVersionedValue;
 import org.apache.ignite.internal.processors.cache.distributed.near.GridNearCacheAdapter;
 import org.apache.ignite.internal.processors.cache.distributed.near.GridNearGetRequest;
 import org.apache.ignite.internal.processors.cache.distributed.near.GridNearGetResponse;
 import org.apache.ignite.internal.processors.cache.distributed.near.GridNearSingleGetRequest;
 import org.apache.ignite.internal.processors.cache.distributed.near.GridNearSingleGetResponse;
+import org.apache.ignite.internal.processors.cache.mvcc.MvccSnapshot;
+import org.apache.ignite.internal.processors.cache.mvcc.MvccUtils;
 import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
 import org.apache.ignite.internal.processors.platform.cache.PlatformCacheEntryFilter;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
@@ -85,7 +91,6 @@ import org.apache.ignite.lang.IgniteUuid;
 import org.apache.ignite.plugin.extensions.communication.Message;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.jsr166.ConcurrentHashMap8;
 
 import static org.apache.ignite.events.EventType.EVT_NODE_FAILED;
 import static org.apache.ignite.events.EventType.EVT_NODE_LEFT;
@@ -104,7 +109,7 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
     private ThreadLocal<IgniteBiTuple<IgniteUuid, GridDhtTopologyFuture>> multiTxHolder = new ThreadLocal<>();
 
     /** Multi tx futures. */
-    private ConcurrentMap<IgniteUuid, MultiUpdateFuture> multiTxFuts = new ConcurrentHashMap8<>();
+    private ConcurrentMap<IgniteUuid, MultiUpdateFuture> multiTxFuts = new ConcurrentHashMap<>();
 
     /** Force key futures. */
     private final ConcurrentMap<IgniteUuid, GridDhtForceKeysFuture<?, ?>> forceKeyFuts = newMap();
@@ -230,18 +235,32 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
 
                         entry.unswap();
 
-                        GridCacheEntryInfo info = entry.info();
+                        if (ctx.mvccEnabled()) {
+                            List<GridCacheEntryInfo> infos = entry.allVersionsInfo();
 
-                        if (info == null) {
-                            assert entry.obsolete() : entry;
+                            if (infos == null) {
+                                assert entry.obsolete() : entry;
 
-                            continue;
+                                continue;
+                            }
+
+                            for (int i = 0; i < infos.size(); i++)
+                                res.addInfo(infos.get(i));
+                        }
+                        else {
+                            GridCacheEntryInfo info = entry.info();
+
+                            if (info == null) {
+                                assert entry.obsolete() : entry;
+
+                                continue;
+                            }
+
+                            if (!info.isNew())
+                                res.addInfo(info);
                         }
 
-                        if (!info.isNew())
-                            res.addInfo(info);
-
-                        ctx.evicts().touch(entry, msg.topologyVersion());
+                        entry.touch(msg.topologyVersion());
 
                         break;
                     }
@@ -287,6 +306,7 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
         }
     }
 
+    /** {@inheritDoc} */
     @Override public void onKernalStop() {
         super.onKernalStop();
 
@@ -433,7 +453,7 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
             // While we are holding read lock, register lock future for partition release future.
             IgniteUuid lockId = IgniteUuid.fromUuid(ctx.localNodeId());
 
-            topVer = top.topologyVersion();
+            topVer = top.readyTopologyVersion();
 
             MultiUpdateFuture fut = new MultiUpdateFuture(topVer);
 
@@ -562,11 +582,11 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
         }
 
         // Version for all loaded entries.
-        final GridCacheVersion ver0 = ctx.shared().versions().nextForLoad(topology().topologyVersion());
+        final AffinityTopologyVersion topVer = ctx.affinity().affinityTopologyVersion();
+
+        final GridCacheVersion ver0 = ctx.shared().versions().nextForLoad(topVer);
 
         final boolean replicate = ctx.isDrEnabled();
-
-        final AffinityTopologyVersion topVer = ctx.affinity().affinityTopologyVersion();
 
         final ExpiryPolicy plc0 = plc != null ? plc : ctx.expiry();
 
@@ -587,12 +607,15 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
             return;
         }
 
-        // Version for all loaded entries.
-        final GridCacheVersion ver0 = ctx.shared().versions().nextForLoad(topology().topologyVersion());
-
-        final boolean replicate = ctx.isDrEnabled();
+        //TODO IGNITE-7954
+        MvccUtils.verifyMvccOperationSupport(ctx, "Load");
 
         final AffinityTopologyVersion topVer = ctx.affinity().affinityTopologyVersion();
+
+        // Version for all loaded entries.
+        final GridCacheVersion ver0 = ctx.shared().versions().nextForLoad(topVer);
+
+        final boolean replicate = ctx.isDrEnabled();
 
         CacheOperationContext opCtx = ctx.operationContextPerCall();
 
@@ -646,6 +669,8 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
             if (part.reserve()) {
                 GridCacheEntryEx entry = null;
 
+                ctx.shared().database().checkpointReadLock();
+
                 try {
                     long ttl = CU.ttlForLoad(plc);
 
@@ -674,9 +699,11 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
                 }
                 finally {
                     if (entry != null)
-                        entry.context().evicts().touch(entry, topVer);
+                        entry.touch(topVer);
 
                     part.release();
+
+                    ctx.shared().database().checkpointReadUnlock();
                 }
             }
             else if (log.isDebugEnabled())
@@ -735,7 +762,6 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
         boolean deserializeBinary,
         boolean recovery,
         boolean skipVals,
-        boolean canRemap,
         boolean needVer
     ) {
         CacheOperationContext opCtx = ctx.operationContextPerCall();
@@ -751,7 +777,6 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
             forcePrimary,
             null,
             skipVals,
-            canRemap,
             needVer);
     }
 
@@ -763,7 +788,7 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
      * @param taskName Task name.
      * @param expiry Expiry policy.
      * @param skipVals Skip values flag.
-     * @param canRemap Can remap flag.
+     * @param mvccSnapshot MVCC snapshot.
      * @return Get future.
      */
     IgniteInternalFuture<Map<KeyCacheObject, EntryGetResult>> getDhtAllAsync(
@@ -774,8 +799,8 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
         String taskName,
         @Nullable IgniteCacheExpiryPolicy expiry,
         boolean skipVals,
-        boolean canRemap,
-        boolean recovery
+        boolean recovery,
+        MvccSnapshot mvccSnapshot
     ) {
         return getAllAsync0(keys,
             readerArgs,
@@ -788,8 +813,8 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
             skipVals,
             /*keep cache objects*/true,
             recovery,
-            canRemap,
-            /*need version*/true);
+            /*need version*/true,
+            mvccSnapshot);
     }
 
     /**
@@ -803,6 +828,7 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
      * @param taskNameHash Task name hash code.
      * @param expiry Expiry policy.
      * @param skipVals Skip values flag.
+     * @param mvccSnapshot MVCC snapshot.
      * @return DHT future.
      */
     public GridDhtFuture<Collection<GridCacheEntryInfo>> getDhtAsync(UUID reader,
@@ -815,7 +841,8 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
         int taskNameHash,
         @Nullable IgniteCacheExpiryPolicy expiry,
         boolean skipVals,
-        boolean recovery
+        boolean recovery,
+        MvccSnapshot mvccSnapshot
     ) {
         GridDhtGetFuture<K, V> fut = new GridDhtGetFuture<>(ctx,
             msgId,
@@ -828,7 +855,8 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
             expiry,
             skipVals,
             recovery,
-            addReaders);
+            addReaders,
+            mvccSnapshot);
 
         fut.init();
 
@@ -846,9 +874,10 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
      * @param taskNameHash Task name hash.
      * @param expiry Expiry.
      * @param skipVals Skip vals flag.
+     * @param mvccSnapshot Mvcc snapshot.
      * @return Future for the operation.
      */
-    public GridDhtGetSingleFuture getDhtSingleAsync(
+    GridDhtGetSingleFuture getDhtSingleAsync(
         UUID nodeId,
         long msgId,
         KeyCacheObject key,
@@ -859,7 +888,8 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
         int taskNameHash,
         @Nullable IgniteCacheExpiryPolicy expiry,
         boolean skipVals,
-        boolean recovery
+        boolean recovery,
+        MvccSnapshot mvccSnapshot
     ) {
         GridDhtGetSingleFuture fut = new GridDhtGetSingleFuture<>(
             ctx,
@@ -873,7 +903,8 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
             taskNameHash,
             expiry,
             skipVals,
-            recovery);
+            recovery,
+            mvccSnapshot);
 
         fut.init();
 
@@ -901,7 +932,8 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
                 req.taskNameHash(),
                 expiryPlc,
                 req.skipValues(),
-                req.recovery());
+                req.recovery(),
+                req.mvccSnapshot());
 
         fut.listen(new CI1<IgniteInternalFuture<GridCacheEntryInfo>>() {
             @Override public void apply(IgniteInternalFuture<GridCacheEntryInfo> f) {
@@ -938,7 +970,7 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
                             res.setContainsValue();
                     }
                     else {
-                        AffinityTopologyVersion topVer = ctx.shared().exchange().lastTopologyFuture().topologyVersion();
+                        AffinityTopologyVersion topVer = ctx.shared().exchange().lastTopologyFuture().initialVersion();
 
                         assert topVer.compareTo(req.topologyVersion()) > 0 : "Wrong ready topology version for " +
                             "invalid partitions response [topVer=" + topVer + ", req=" + req + ']';
@@ -970,6 +1002,10 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
                 try {
                     ctx.io().send(nodeId, res, ctx.ioPolicy());
                 }
+                catch (ClusterTopologyCheckedException e) {
+                    if (log.isDebugEnabled())
+                        log.debug("Failed to send get response to node, node failed: " + nodeId);
+                }
                 catch (IgniteCheckedException e) {
                     U.error(log, "Failed to send get response to node (is node still alive?) [nodeId=" + nodeId +
                         ",req=" + req + ", res=" + res + ']', e);
@@ -1000,7 +1036,8 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
                 req.taskNameHash(),
                 expiryPlc,
                 req.skipValues(),
-                req.recovery());
+                req.recovery(),
+                req.mvccSnapshot());
 
         fut.listen(new CI1<IgniteInternalFuture<Collection<GridCacheEntryInfo>>>() {
             @Override public void apply(IgniteInternalFuture<Collection<GridCacheEntryInfo>> f) {
@@ -1028,7 +1065,7 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
                 }
 
                 if (!F.isEmpty(fut.invalidPartitions()))
-                    res.invalidPartitions(fut.invalidPartitions(), ctx.shared().exchange().lastTopologyFuture().topologyVersion());
+                    res.invalidPartitions(fut.invalidPartitions(), ctx.shared().exchange().lastTopologyFuture().initialVersion());
 
                 try {
                     ctx.io().send(nodeId, res, ctx.ioPolicy());
@@ -1180,7 +1217,7 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
                 }
                 finally {
                     if (entry != null)
-                        cache.context().evicts().touch(entry, AffinityTopologyVersion.NONE);
+                        entry.touch(AffinityTopologyVersion.NONE);
                 }
             }
             catch (IgniteCheckedException e) {
@@ -1225,6 +1262,8 @@ public abstract class GridDhtCacheAdapter<K, V> extends GridDistributedCacheAdap
     protected final boolean needRemap(AffinityTopologyVersion expVer, AffinityTopologyVersion curVer) {
         if (expVer.equals(curVer))
             return false;
+
+        // TODO IGNITE-7164 check mvcc crd for mvcc enabled txs.
 
         Collection<ClusterNode> cacheNodes0 = ctx.discovery().cacheGroupAffinityNodes(ctx.groupId(), expVer);
         Collection<ClusterNode> cacheNodes1 = ctx.discovery().cacheGroupAffinityNodes(ctx.groupId(), curVer);

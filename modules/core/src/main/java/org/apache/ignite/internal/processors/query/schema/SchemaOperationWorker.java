@@ -105,7 +105,7 @@ public class SchemaOperationWorker extends GridWorker {
     @Override protected void body() throws InterruptedException, IgniteInterruptedCheckedException {
         try {
             // Execute.
-            qryProc.processIndexOperationLocal(op, type, depId, cancelToken);
+            qryProc.processSchemaOperationLocal(op, type, depId, cancelToken);
 
             fut.onDone();
         }
@@ -177,7 +177,7 @@ public class SchemaOperationWorker extends GridWorker {
     /**
      * Cancel operation.
      */
-    public void cancel() {
+    @Override public void cancel() {
         if (cancelToken.cancel())
             super.cancel();
     }

@@ -17,7 +17,9 @@
 
 package org.apache.ignite.internal.processors.cache;
 
+import java.util.Collections;
 import org.apache.ignite.IgniteCache;
+import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.mxbean.CacheMetricsMXBean;
 
 /**
@@ -111,6 +113,11 @@ class CacheLocalMetricsMXBeanImpl implements CacheMetricsMXBean {
     /** {@inheritDoc} */
     @Override public int getSize() {
         return cache.metrics0().getSize();
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getCacheSize() {
+        return cache.metrics0().getCacheSize();
     }
 
     /** {@inheritDoc} */
@@ -279,6 +286,61 @@ class CacheLocalMetricsMXBeanImpl implements CacheMetricsMXBean {
     }
 
     /** {@inheritDoc} */
+    @Override public long getEntryProcessorPuts() {
+        return cache.metrics0().getEntryProcessorPuts();
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getEntryProcessorRemovals() {
+        return cache.metrics0().getEntryProcessorRemovals();
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getEntryProcessorReadOnlyInvocations() {
+        return cache.metrics0().getEntryProcessorReadOnlyInvocations();
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getEntryProcessorInvocations() {
+        return cache.metrics0().getEntryProcessorInvocations();
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getEntryProcessorHits() {
+        return cache.metrics0().getEntryProcessorHits();
+    }
+
+    /** {@inheritDoc} */
+    @Override public float getEntryProcessorHitPercentage() {
+        return cache.metrics0().getEntryProcessorHitPercentage();
+    }
+
+    /** {@inheritDoc} */
+    @Override public float getEntryProcessorMissPercentage() {
+        return cache.metrics0().getEntryProcessorMissPercentage();
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getEntryProcessorMisses() {
+        return cache.metrics0().getEntryProcessorMisses();
+    }
+
+    /** {@inheritDoc} */
+    @Override public float getEntryProcessorAverageInvocationTime() {
+        return cache.metrics0().getEntryProcessorAverageInvocationTime();
+    }
+
+    /** {@inheritDoc} */
+    @Override public float getEntryProcessorMinInvocationTime() {
+        return cache.metrics0().getEntryProcessorMinInvocationTime();
+    }
+
+    /** {@inheritDoc} */
+    @Override public float getEntryProcessorMaxInvocationTime() {
+        return cache.metrics0().getEntryProcessorMaxInvocationTime();
+    }
+
+    /** {@inheritDoc} */
     @Override public long getCacheRemovals() {
         return cache.metrics0().getCacheRemovals();
     }
@@ -363,6 +425,14 @@ class CacheLocalMetricsMXBeanImpl implements CacheMetricsMXBean {
         return cache.metrics0().getTotalPartitionsCount();
     }
 
+    @Override public long getRebalancedKeys() {
+        return cache.metrics0().getRebalancedKeys();
+    }
+
+    @Override public long getEstimatedRebalancingKeys() {
+        return cache.metrics0().getEstimatedRebalancingKeys();
+    }
+
     /** {@inheritDoc} */
     @Override public int getRebalancingPartitionsCount() {
         return cache.metrics0().getRebalancingPartitionsCount();
@@ -381,5 +451,60 @@ class CacheLocalMetricsMXBeanImpl implements CacheMetricsMXBean {
     /** {@inheritDoc} */
     @Override public long getRebalancingBytesRate() {
         return cache.metrics0().getRebalancingBytesRate();
+    }
+
+    /** {@inheritDoc} */
+    @Override public long estimateRebalancingFinishTime() {
+        return cache.metrics0().estimateRebalancingFinishTime();
+    }
+
+    /** {@inheritDoc} */
+    @Override public long rebalancingStartTime() {
+        return cache.metrics0().rebalancingStartTime();
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getEstimatedRebalancingFinishTime() {
+        return cache.metrics0().getEstimatedRebalancingFinishTime();
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getRebalancingStartTime() {
+        return cache.metrics0().getRebalancingStartTime();
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getRebalanceClearingPartitionsLeft() {
+        return cache.metrics0().getRebalanceClearingPartitionsLeft();
+    }
+
+    /** {@inheritDoc} */
+    @Override public boolean isValidForReading() {
+        return cache.metrics0().isValidForReading();
+    }
+
+    /** {@inheritDoc} */
+    @Override public boolean isValidForWriting() {
+        return cache.metrics0().isValidForWriting();
+    }
+
+    /** {@inheritDoc} */
+    @Override public void enableStatistics() {
+        try {
+            cache.context().shared().cache().enableStatistics(Collections.singleton(cache.name()), true);
+        }
+        catch (IgniteCheckedException e) {
+            throw new RuntimeException(e.getMessage());
+        }
+    }
+
+    /** {@inheritDoc} */
+    @Override public void disableStatistics() {
+        try {
+            cache.context().shared().cache().enableStatistics(Collections.singleton(cache.name()), false);
+        }
+        catch (IgniteCheckedException e) {
+            throw new RuntimeException(e.getMessage());
+        }
     }
 }

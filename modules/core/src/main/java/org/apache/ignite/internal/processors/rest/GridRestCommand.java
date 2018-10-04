@@ -72,6 +72,9 @@ public enum GridRestCommand {
     /** Remove several values from cache. */
     CACHE_REMOVE_ALL("rmvall"),
 
+    /** Clear the specified cache, or all caches if none is specified. */
+    CACHE_CLEAR("clear"),
+
     /** Replace cache value only if there is currently a mapping for it. */
     CACHE_REPLACE("rep"),
 
@@ -95,6 +98,9 @@ public enum GridRestCommand {
 
     /** Cache size. */
     CACHE_SIZE("size"),
+
+    /** Set TTL for the key. */
+    CACHE_UPDATE_TLL("updatettl"),
 
     /** Cache metadata. */
     CACHE_METADATA("metadata"),
@@ -153,14 +159,34 @@ public enum GridRestCommand {
     /** Close query. */
     CLOSE_SQL_QUERY("qrycls"),
 
-    /** */
+    /** @deprecated Use {@link #CLUSTER_ACTIVATE} instead. */
+    @Deprecated
     CLUSTER_ACTIVE("active"),
 
-    /** */
+    /** @deprecated Use {@link #CLUSTER_DEACTIVATE} instead. */
+    @Deprecated
     CLUSTER_INACTIVE("inactive"),
 
     /** */
-    CLUSTER_CURRENT_STATE("currentState");
+    CLUSTER_ACTIVATE("activate"),
+
+    /** */
+    CLUSTER_DEACTIVATE("deactivate"),
+
+    /** */
+    CLUSTER_CURRENT_STATE("currentstate"),
+
+    /** */
+    AUTHENTICATE("authenticate"),
+
+    /** */
+    ADD_USER("adduser"),
+
+    /** */
+    REMOVE_USER("removeuser"),
+
+    /** */
+    UPDATE_USER("updateuser");
 
     /** Enum values. */
     private static final GridRestCommand[] VALS = values();
@@ -168,9 +194,7 @@ public enum GridRestCommand {
     /** Key to enum map. */
     private static final Map<String, GridRestCommand> cmds = new HashMap<>();
 
-    /**
-     * Map keys to commands.
-     */
+    // Map keys to commands.
     static {
         for (GridRestCommand cmd : values())
             cmds.put(cmd.key(), cmd);

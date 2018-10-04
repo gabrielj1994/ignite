@@ -25,11 +25,13 @@ import org.apache.ignite.cache.CacheWriteSynchronizationMode;
 import org.apache.ignite.internal.GridDirectCollection;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.distributed.GridDistributedTxFinishRequest;
+import org.apache.ignite.internal.processors.cache.mvcc.MvccSnapshot;
 import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
 import org.apache.ignite.internal.processors.trace.EventsTrace;
 import org.apache.ignite.internal.util.GridLongList;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.internal.S;
+import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteUuid;
 import org.apache.ignite.plugin.extensions.communication.MessageCollectionItemType;
 import org.apache.ignite.plugin.extensions.communication.MessageReader;
@@ -67,6 +69,13 @@ public class GridDhtTxFinishRequest extends GridDistributedTxFinishRequest {
     /** One phase commit write version. */
     private GridCacheVersion writeVer;
 
+    /** */
+    private MvccSnapshot mvccSnapshot;
+
+    /** */
+    @GridDirectCollection(PartitionUpdateCountersMessage.class)
+    private Collection<PartitionUpdateCountersMessage> updCntrs;
+
     /**
      * Empty constructor required for {@link Externalizable}.
      */
@@ -97,6 +106,10 @@ public class GridDhtTxFinishRequest extends GridDistributedTxFinishRequest {
      * @param subjId Subject ID.
      * @param taskNameHash Task name hash.
      * @param addDepInfo Deployment info flag.
+     * @param retVal Need return value
+     * @param waitRemoteTxs Wait remote transactions flag
+     * @param mvccSnapshot Mvcc snapshot.
+     * @param updCntrs Update counters for mvcc Tx.
      */
     public GridDhtTxFinishRequest(
         UUID nearNodeId,
@@ -123,6 +136,8 @@ public class GridDhtTxFinishRequest extends GridDistributedTxFinishRequest {
         boolean addDepInfo,
         boolean retVal,
         boolean waitRemoteTxs,
+        MvccSnapshot mvccSnapshot,
+        Collection<PartitionUpdateCountersMessage> updCntrs,
         EventsTrace eventsTrace
     ) {
         super(
@@ -153,6 +168,8 @@ public class GridDhtTxFinishRequest extends GridDistributedTxFinishRequest {
         this.nearNodeId = nearNodeId;
         this.isolation = isolation;
         this.miniId = miniId;
+        this.mvccSnapshot = mvccSnapshot;
+        this.updCntrs = updCntrs;
 
         needReturnValue(retVal);
         waitRemoteTransactions(waitRemoteTxs);
@@ -185,6 +202,10 @@ public class GridDhtTxFinishRequest extends GridDistributedTxFinishRequest {
      * @param taskNameHash Task name hash.
      * @param updateIdxs Partition update idxs.
      * @param addDepInfo Deployment info flag.
+     * @param retVal Need return value
+     * @param waitRemoteTxs Wait remote transactions flag
+     * @param mvccSnapshot Mvcc snapshot.
+     * @param updCntrs Update counters for mvcc Tx.
      */
     public GridDhtTxFinishRequest(
         UUID nearNodeId,
@@ -212,6 +233,8 @@ public class GridDhtTxFinishRequest extends GridDistributedTxFinishRequest {
         Collection<Long> updateIdxs,
         boolean retVal,
         boolean waitRemoteTxs,
+        MvccSnapshot mvccSnapshot,
+        Collection<PartitionUpdateCountersMessage> updCntrs,
         EventsTrace eventsTrace
     ) {
         this(nearNodeId,
@@ -238,6 +261,8 @@ public class GridDhtTxFinishRequest extends GridDistributedTxFinishRequest {
             addDepInfo,
             retVal,
             waitRemoteTxs,
+            mvccSnapshot,
+            updCntrs,
             eventsTrace);
 
         if (updateIdxs != null && !updateIdxs.isEmpty()) {
@@ -246,6 +271,13 @@ public class GridDhtTxFinishRequest extends GridDistributedTxFinishRequest {
             for (Long idx : updateIdxs)
                 partUpdateCnt.add(idx);
         }
+    }
+
+    /**
+     * @return Counter.
+     */
+    public MvccSnapshot mvccSnapshot() {
+        return mvccSnapshot;
     }
 
     /**
@@ -346,6 +378,13 @@ public class GridDhtTxFinishRequest extends GridDistributedTxFinishRequest {
         setFlag(retVal, NEED_RETURN_VALUE_FLAG_MASK);
     }
 
+    /**
+     * @return Partition counters update deferred until transaction commit.
+     */
+    public Collection<PartitionUpdateCountersMessage> updateCounters() {
+        return updCntrs;
+    }
+
     /** {@inheritDoc} */
     @Override public boolean writeTo(ByteBuffer buf, MessageWriter writer) {
         writer.setBuffer(buf);
@@ -393,6 +432,18 @@ public class GridDhtTxFinishRequest extends GridDistributedTxFinishRequest {
 
             case 27:
                 if (!writer.writeMessage("writeVer", writeVer))
+                    return false;
+
+                writer.incrementState();
+
+            case 27:
+                if (!writer.writeMessage("mvccSnapshot", mvccSnapshot))
+                    return false;
+
+                writer.incrementState();
+
+            case 28:
+                if (!writer.writeCollection("updCntrs", updCntrs, MessageCollectionItemType.MSG))
                     return false;
 
                 writer.incrementState();
@@ -465,6 +516,22 @@ public class GridDhtTxFinishRequest extends GridDistributedTxFinishRequest {
 
                 reader.incrementState();
 
+            case 27:
+                mvccSnapshot = reader.readMessage("mvccSnapshot");
+
+                if (!reader.isLastRead())
+                    return false;
+
+                reader.incrementState();
+
+            case 28:
+                updCntrs = reader.readCollection("updCntrs", MessageCollectionItemType.MSG);
+
+                if (!reader.isLastRead())
+                    return false;
+
+                reader.incrementState();
+
         }
 
         return reader.afterMessageRead(GridDhtTxFinishRequest.class);
@@ -477,7 +544,12 @@ public class GridDhtTxFinishRequest extends GridDistributedTxFinishRequest {
 
     /** {@inheritDoc} */
     @Override public byte fieldsCount() {
-        return 28;
+        return 29;
+    }
+
+    /** {@inheritDoc} */
+    @Override public int partition() {
+        return U.safeAbs(version().hashCode());
     }
 
     /** {@inheritDoc} */

@@ -26,7 +26,6 @@ import java.io.FileWriter;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.net.URL;
-import java.net.URLClassLoader;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Collection;
@@ -57,6 +56,10 @@ import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxFi
 import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxPrepareRequest;
 import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxPrepareResponse;
 import org.apache.ignite.internal.processors.trace.EventsTrace;
+import org.apache.ignite.internal.processors.cache.distributed.dht.GridInvokeValue;
+import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxEnlistRequest;
+import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxEnlistResponse;
+import org.apache.ignite.internal.util.IgniteUtils;
 import org.apache.ignite.internal.util.typedef.internal.SB;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteUuid;
@@ -181,7 +184,7 @@ public class MessageCodeGenerator {
 
 //        gen.generateAll(true);
 
-//        gen.generateAndWrite(GridChangeGlobalStateMessageResponse.class);
+        gen.generateAndWrite(GridNearTxEnlistResponse.class);
 
 //        gen.generateAndWrite(GridNearAtomicUpdateRequest.class);
 
@@ -247,6 +250,10 @@ public class MessageCodeGenerator {
 //        gen.generateAndWrite(GridH2RowMessage.class);
 //        gen.generateAndWrite(GridCacheVersion.class);
 //        gen.generateAndWrite(GridCacheVersionEx.class);
+//        gen.generateAndWrite(GridH2DmlRequest.class);
+//        gen.generateAndWrite(GridH2DmlResponse.class);
+//        gen.generateAndWrite(GridNearTxEnlistRequest.class);
+//        gen.generateAndWrite(GridNearTxEnlistResponse.class);
     }
 
     /**
@@ -889,9 +896,9 @@ public class MessageCodeGenerator {
                 }
             });
 
-        URLClassLoader ldr = (URLClassLoader)getClass().getClassLoader();
+        ClassLoader ldr = getClass().getClassLoader();
 
-        for (URL url : ldr.getURLs()) {
+        for (URL url :  IgniteUtils.classLoaderUrls(ldr)) {
             File file = new File(url.toURI());
 
             int prefixLen = file.getPath().length() + 1;

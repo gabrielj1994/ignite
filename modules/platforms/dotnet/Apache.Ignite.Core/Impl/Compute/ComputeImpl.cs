@@ -34,13 +34,12 @@ namespace Apache.Ignite.Core.Impl.Compute
     using Apache.Ignite.Core.Impl.Cluster;
     using Apache.Ignite.Core.Impl.Common;
     using Apache.Ignite.Core.Impl.Compute.Closure;
-    using Apache.Ignite.Core.Impl.Unmanaged;
 
     /// <summary>
     /// Compute implementation.
     /// </summary>
     [SuppressMessage("Microsoft.Design", "CA1001:TypesThatOwnDisposableFieldsShouldBeDisposable")]
-    internal class ComputeImpl : PlatformTarget
+    internal class ComputeImpl : PlatformTargetAdapter
     {
         /** */
         private const int OpAffinity = 1;
@@ -66,6 +65,9 @@ namespace Apache.Ignite.Core.Impl.Compute
         /** */
         private const int OpExecNative = 8;
 
+        /** */
+        private const int OpWithNoResultCache = 9;
+
         /** Underlying projection. */
         private readonly ClusterGroupImpl _prj;
 
@@ -76,11 +78,10 @@ namespace Apache.Ignite.Core.Impl.Compute
         /// Constructor.
         /// </summary>
         /// <param name="target">Target.</param>
-        /// <param name="marsh">Marshaller.</param>
         /// <param name="prj">Projection.</param>
         /// <param name="keepBinary">Binary flag.</param>
-        public ComputeImpl(IUnmanagedTarget target, Marshaller marsh, ClusterGroupImpl prj, bool keepBinary)
-            : base(target, marsh)
+        public ComputeImpl(IPlatformTargetInternal target, ClusterGroupImpl prj, bool keepBinary)
+            : base(target)
         {
             _prj = prj;
 
@@ -117,6 +118,14 @@ namespace Apache.Ignite.Core.Impl.Compute
         public void WithTimeout(long timeout)
         {
             DoOutInOp(OpWithTimeout, timeout);
+        }
+
+        /// <summary>
+        /// Disables caching for the next executed task in the current thread.
+        /// </summary>
+        public void WithNoResultCache()
+        {
+            DoOutInOp(OpWithNoResultCache);
         }
 
         /// <summary>
@@ -186,15 +195,15 @@ namespace Apache.Ignite.Core.Impl.Compute
 
             long ptr = Marshaller.Ignite.HandleRegistry.Allocate(holder);
 
-            var futTarget = DoOutOpObject(OpExecNative, w =>
+            var futTarget = DoOutOpObject(OpExecNative, (IBinaryStream s) =>
             {
-                w.WriteLong(ptr);
-                w.WriteLong(_prj.TopologyVersion);
+                s.WriteLong(ptr);
+                s.WriteLong(_prj.TopologyVersion);
             });
 
             var future = holder.Future;
 
-            future.SetTarget(new Listenable(futTarget, Marshaller));
+            future.SetTarget(new Listenable(futTarget));
 
             return future;
         }
@@ -551,7 +560,7 @@ namespace Apache.Ignite.Core.Impl.Compute
                             writeAction(writer);
                     });
 
-                    holder.Future.SetTarget(new Listenable(futTarget, Marshaller));
+                    holder.Future.SetTarget(new Listenable(futTarget));
                 }
                 catch (Exception e)
                 {
@@ -592,7 +601,7 @@ namespace Apache.Ignite.Core.Impl.Compute
 
             try
             {
-                writer.WriteObject(jobHolder);
+                writer.WriteObjectDetached(jobHolder);
             }
             catch (Exception)
             {

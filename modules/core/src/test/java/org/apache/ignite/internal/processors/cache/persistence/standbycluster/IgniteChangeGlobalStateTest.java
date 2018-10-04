@@ -543,6 +543,8 @@ public class IgniteChangeGlobalStateTest extends IgniteChangeGlobalStateAbstract
      * @throws Exception If failed.
      */
     public void testActivateAfterFailGetLock() throws Exception {
+        fail("https://issues.apache.org/jira/browse/IGNITE-1094");
+
         Ignite ig1P = primary(0);
         Ignite ig2P = primary(1);
         Ignite ig3P = primary(2);
@@ -573,22 +575,17 @@ public class IgniteChangeGlobalStateTest extends IgniteChangeGlobalStateAbstract
 
         stopPrimary(0);
 
-        boolean exc = false;
-
         try {
             ig3CB.active(true);
+
+            fail("Activation should fail");
         }
         catch (IgniteException e) {
-            exc = true;
-
-            log.error("stack trace from remote node", e);
+            log.error("Stack trace from remote node", e);
 
             for (Throwable t : e.getSuppressed())
                 assertTrue(t.getMessage().contains("can't get lock during"));
         }
-
-        if (!exc)
-            fail();
 
         assertTrue(!ig1B.active());
         assertTrue(!ig2B.active());

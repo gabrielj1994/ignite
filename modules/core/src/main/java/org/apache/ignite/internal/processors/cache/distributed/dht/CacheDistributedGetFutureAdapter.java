@@ -18,11 +18,9 @@
 package org.apache.ignite.internal.processors.cache.distributed.dht;
 
 import java.util.Collection;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
-import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.internal.cluster.ClusterTopologyServerNotFoundException;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.GridCacheCompoundIdentityFuture;
@@ -37,7 +35,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_NEAR_GET_MAX_REMAPS;
 import static org.apache.ignite.IgniteSystemProperties.getInteger;
-import static org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtPartitionState.OWNING;
+import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.OWNING;
 
 /**
  *
@@ -92,7 +90,7 @@ public abstract class CacheDistributedGetFutureAdapter<K, V> extends GridCacheCo
     protected IgniteCacheExpiryPolicy expiryPlc;
 
     /** Flag indicating that get should be done on a locked topology version. */
-    protected boolean canRemap;
+    protected boolean canRemap = true;
 
     /** */
     protected final boolean needVer;
@@ -114,7 +112,6 @@ public abstract class CacheDistributedGetFutureAdapter<K, V> extends GridCacheCo
      * @param deserializeBinary Deserialize binary flag.
      * @param expiryPlc Expiry policy.
      * @param skipVals Skip values flag.
-     * @param canRemap Flag indicating whether future can be remapped on a newer topology version.
      * @param needVer If {@code true} returns values as tuples containing value and version.
      * @param keepCacheObjects Keep cache objects flag.
      */
@@ -128,7 +125,6 @@ public abstract class CacheDistributedGetFutureAdapter<K, V> extends GridCacheCo
         boolean deserializeBinary,
         @Nullable IgniteCacheExpiryPolicy expiryPlc,
         boolean skipVals,
-        boolean canRemap,
         boolean needVer,
         boolean keepCacheObjects,
         boolean recovery
@@ -146,31 +142,11 @@ public abstract class CacheDistributedGetFutureAdapter<K, V> extends GridCacheCo
         this.deserializeBinary = deserializeBinary;
         this.expiryPlc = expiryPlc;
         this.skipVals = skipVals;
-        this.canRemap = canRemap;
         this.needVer = needVer;
         this.keepCacheObjects = keepCacheObjects;
         this.recovery = recovery;
 
         futId = IgniteUuid.randomUuid();
-    }
-
-    /**
-     * Affinity node to send get request to.
-     *
-     * @param affNodes All affinity nodes.
-     * @return Affinity node to get key from.
-     */
-    protected final ClusterNode affinityNode(List<ClusterNode> affNodes) {
-        if (!canRemap) {
-            for (ClusterNode node : affNodes) {
-                if (cctx.discovery().alive(node))
-                    return node;
-            }
-
-            return null;
-        }
-        else
-            return affNodes.get(0);
     }
 
     /**

@@ -32,6 +32,7 @@ import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.processors.affinity.AffinityAssignment;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.affinity.GridAffinityAssignmentCache;
+import org.apache.ignite.internal.processors.cache.mvcc.MvccCoordinator;
 import org.apache.ignite.internal.util.future.GridFinishedFuture;
 import org.apache.ignite.internal.util.typedef.F;
 import org.jetbrains.annotations.Nullable;
@@ -99,7 +100,7 @@ public class GridCacheAffinityManager extends GridCacheManagerAdapter {
 
         IgniteInternalFuture<AffinityTopologyVersion> fut = aff.readyFuture(topVer);
 
-        return fut != null ? fut : new GridFinishedFuture<>(topVer);
+        return fut != null ? fut : new GridFinishedFuture<>(aff.lastVersion());
     }
 
     /**
@@ -123,7 +124,12 @@ public class GridCacheAffinityManager extends GridCacheManagerAdapter {
         if (cctx.isLocal())
             topVer = LOC_CACHE_TOP_VER;
 
-        return aff.assignments(topVer);
+        GridAffinityAssignmentCache aff0 = aff;
+
+        if (aff0 == null)
+            throw new IgniteException(FAILED_TO_FIND_CACHE_ERR_MSG + cctx.name());
+
+        return aff0.assignments(topVer);
     }
 
     /**
@@ -236,6 +242,10 @@ public class GridCacheAffinityManager extends GridCacheManagerAdapter {
             throw new IgniteException(FAILED_TO_FIND_CACHE_ERR_MSG + cctx.name());
 
         return aff0.cachedAffinity(topVer);
+    }
+
+    public MvccCoordinator mvccCoordinator(AffinityTopologyVersion topVer) {
+        return assignment(topVer).mvccCoordinator();
     }
 
     /**

@@ -17,23 +17,17 @@
 
 package org.apache.ignite.internal.processors.affinity;
 
-import org.apache.ignite.cluster.ClusterNode;
-
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import org.apache.ignite.cluster.ClusterNode;
+import org.apache.ignite.internal.processors.cache.mvcc.MvccCoordinator;
 
 /**
  * Cached affinity calculations.
  */
 public interface AffinityAssignment {
-    /**
-     * @return {@code True} if related discovery event did not not cause affinity assignment change and
-     *    this assignment is just reference to the previous one.
-     */
-    public boolean clientEventChange();
-
     /**
      * @return Affinity assignment computed by affinity function.
      */
@@ -66,6 +60,11 @@ public interface AffinityAssignment {
     public HashSet<UUID> getIds(int part);
 
     /**
+     * @return Nodes having parimary and backup assignments.
+     */
+    public Set<ClusterNode> nodes();
+
+    /**
      * @return Nodes having primary partitions assignments.
      */
     public Set<ClusterNode> primaryPartitionNodes();
@@ -85,4 +84,9 @@ public interface AffinityAssignment {
      * @return Backup partitions for specified node ID.
      */
     public Set<Integer> backupPartitions(UUID nodeId);
+
+    /**
+     * @return Mvcc coordinator.
+     */
+    public MvccCoordinator mvccCoordinator();
 }

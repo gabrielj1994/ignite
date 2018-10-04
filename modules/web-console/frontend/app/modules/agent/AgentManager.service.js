@@ -15,15 +15,46 @@
  * limitations under the License.
  */
 
-import { BehaviorSubject } from 'rxjs/BehaviorSubject';
+import _ from 'lodash';
+import {nonEmpty, nonNil} from 'app/utils/lodashMixins';
 
+import { BehaviorSubject } from 'rxjs/BehaviorSubject';
+import 'rxjs/add/operator/first';
+import 'rxjs/add/operator/partition';
+import 'rxjs/add/operator/takeUntil';
+import 'rxjs/add/operator/pluck';
+
+import AgentModal from './AgentModal.service';
+// @ts-ignore
+import Worker from './decompress.worker';
+import SimpleWorkerPool from '../../utils/SimpleWorkerPool';
 import maskNull from 'app/core/utils/maskNull';
+
+import {ClusterSecretsManager} from './types/ClusterSecretsManager';
+import ClusterLoginService from './components/cluster-login/service';
 
 const State = {
     DISCONNECTED: 'DISCONNECTED',
     AGENT_DISCONNECTED: 'AGENT_DISCONNECTED',
     CLUSTER_DISCONNECTED: 'CLUSTER_DISCONNECTED',
     CONNECTED: 'CONNECTED'
+};
+
+const IGNITE_2_0 = '2.0.0';
+const LAZY_QUERY_SINCE = [['2.1.4-p1', '2.2.0'], '2.2.1'];
+const COLLOCATED_QUERY_SINCE = [['2.3.5', '2.4.0'], ['2.4.6', '2.5.0'], ['2.5.1-p13', '2.6.0'], '2.7.0'];
+
+// Error codes from o.a.i.internal.processors.restGridRestResponse.java
+
+const SuccessStatus = {
+    /** Command succeeded. */
+    STATUS_SUCCESS: 0,
+    /** Command failed. */
+    STATUS_FAILED: 1,
+    /** Authentication failure. */
+    AUTH_FAILED: 2,
+    /** Security check failed. */
+    SECURITY_CHECK_FAILED: 3
 };
 
 class ConnectionState {
@@ -34,13 +65,27 @@ class ConnectionState {
         this.state = State.DISCONNECTED;
     }
 
+    updateCluster(cluster) {
+        this.cluster = cluster;
+        this.cluster.connected = !!_.find(this.clusters, {id: this.cluster.id});
+
+        return cluster;
+    }
+
     update(demo, count, clusters) {
+        _.forEach(clusters, (cluster) => {
+            cluster.name = cluster.id;
+        });
+
         this.clusters = clusters;
+
+        if (_.isEmpty(this.clusters))
+            this.cluster = null;
 
         if (_.isNil(this.cluster))
             this.cluster = _.head(clusters);
 
-        if (_.nonNil(this.cluster))
+        if (this.cluster)
             this.cluster.connected = !!_.find(clusters, {id: this.cluster.id});
 
         if (count === 0)
@@ -52,7 +97,7 @@ class ConnectionState {
     }
 
     useConnectedCluster() {
-        if (_.nonEmpty(this.clusters) && !this.cluster.connected) {
+        if (nonEmpty(this.clusters) && !this.cluster.connected) {
             this.cluster = _.head(this.clusters);
 
             this.cluster.connected = true;
@@ -72,51 +117,80 @@ class ConnectionState {
     }
 }
 
-export default class IgniteAgentManager {
-    static $inject = ['$rootScope', '$q', 'igniteSocketFactory', 'AgentModal', 'UserNotifications'];
+export default class AgentManager {
+    static $inject = ['$rootScope', '$q', '$transitions', 'igniteSocketFactory', 'AgentModal', 'UserNotifications', 'IgniteVersion', 'ClusterLoginService'];
 
-    constructor($root, $q, socketFactory, AgentModal, UserNotifications) {
-        this.$root = $root;
-        this.$q = $q;
-        this.socketFactory = socketFactory;
+    /** @type {ng.IScope} */
+    $root;
 
-        /**
-         * @type {AgentModal}
-         */
-        this.AgentModal = AgentModal;
+    /** @type {ng.IQService} */
+    $q;
 
-        /**
-         * @type {UserNotifications}
-         */
-        this.UserNotifications = UserNotifications;
+    /** @type {AgentModal} */
+    agentModal;
 
-        this.promises = new Set();
+    /** @type {ClusterLoginService} */
+    ClusterLoginSrv;
 
-        $root.$on('$stateChangeSuccess', () => this.stopWatch());
+    /** @type {String} */
+    clusterVersion = '2.4.0';
 
-        /**
-         * Connection to backend.
-         * @type {Socket}
-         */
-        this.socket = null;
+    connectionSbj = new BehaviorSubject(new ConnectionState(AgentManager.restoreActiveCluster()));
 
-        let cluster;
+    /** @type {ClusterSecretsManager} */
+    clustersSecrets = new ClusterSecretsManager();
 
+    pool = new SimpleWorkerPool('decompressor', Worker, 4);
+
+    /** @type {Set<ng.IPromise<unknown>>} */
+    promises = new Set();
+
+    socket = null;
+
+    static restoreActiveCluster() {
         try {
-            cluster = JSON.parse(localStorage.cluster);
-
-            localStorage.removeItem('cluster');
+            return JSON.parse(localStorage.cluster);
         }
         catch (ignore) {
-            // No-op.
+            return null;
         }
+        finally {
+            localStorage.removeItem('cluster');
+        }
+    }
 
-        this.connectionSbj = new BehaviorSubject(new ConnectionState(cluster));
+    /**
+     * @param {ng.IRootScopeService} $root
+     * @param {ng.IQService} $q
+     * @param {import('@uirouter/angularjs').TransitionService} $transitions
+     * @param {unknown} socketFactory
+     * @param {import('./AgentModal.service').default} agentModal
+     * @param {import('app/components/user-notifications/service').default} UserNotifications
+     * @param {import('app/services/Version.service').default} Version
+     * @param {import('./components/cluster-login/service').default} ClusterLoginSrv
+     */
+    constructor($root, $q, $transitions, socketFactory, agentModal, UserNotifications, Version, ClusterLoginSrv) {
+        this.$root = $root;
+        this.$q = $q;
+        this.$transitions = $transitions;
+        this.socketFactory = socketFactory;
+        this.agentModal = agentModal;
+        this.UserNotifications = UserNotifications;
+        this.Version = Version;
+        this.ClusterLoginSrv = ClusterLoginSrv;
 
-        this.ignite2x = true;
-        this.ignite2_1 = true;
+        let prevCluster;
 
-        if (!$root.IgniteDemoMode) {
+        this.currentCluster$ = this.connectionSbj
+            .distinctUntilChanged(({ cluster }) => prevCluster === cluster)
+            .do(({ cluster }) => prevCluster = cluster);
+
+        this.clusterIsActive$ = this.connectionSbj
+            .map(({ cluster }) => cluster)
+            .filter((cluster) => Boolean(cluster))
+            .pluck('active');
+
+        if (!this.isDemoMode()) {
             this.connectionSbj.subscribe({
                 next: ({cluster}) => {
                     const version = _.get(cluster, 'clusterVersion');
@@ -124,41 +198,49 @@ export default class IgniteAgentManager {
                     if (_.isEmpty(version))
                         return;
 
-                    this.ignite2x = version.startsWith('2.');
-                    this.ignite2_1 = version.startsWith('2.1');
+                    this.clusterVersion = version;
                 }
             });
         }
     }
 
-    connect() {
-        const self = this;
+    isDemoMode() {
+        return this.$root.IgniteDemoMode;
+    }
 
-        if (_.nonNil(self.socket))
+    available(...sinceVersion) {
+        return this.Version.since(this.clusterVersion, ...sinceVersion);
+    }
+
+    connect() {
+        if (nonNil(this.socket))
             return;
 
-        self.socket = self.socketFactory();
+        this.socket = this.socketFactory();
 
         const onDisconnect = () => {
-            const conn = self.connectionSbj.getValue();
+            const conn = this.connectionSbj.getValue();
 
             conn.disconnect();
 
-            self.connectionSbj.next(conn);
+            this.connectionSbj.next(conn);
         };
 
-        self.socket.on('connect_error', onDisconnect);
-        self.socket.on('disconnect', onDisconnect);
+        this.socket.on('connect_error', onDisconnect);
 
-        self.socket.on('agents:stat', ({clusters, count}) => {
-            const conn = self.connectionSbj.getValue();
+        this.socket.on('disconnect', onDisconnect);
 
-            conn.update(self.$root.IgniteDemoMode, count, clusters);
+        this.socket.on('agents:stat', ({clusters, count}) => {
+            const conn = this.connectionSbj.getValue();
 
-            self.connectionSbj.next(conn);
+            conn.update(this.isDemoMode(), count, clusters);
+
+            this.connectionSbj.next(conn);
         });
 
-        self.socket.on('user:notifications', (notification) => this.UserNotifications.notification = notification);
+        this.socket.on('cluster:changed', (cluster) => this.updateCluster(cluster));
+
+        this.socket.on('user:notifications', (notification) => this.UserNotifications.notification = notification);
     }
 
     saveToStorage(cluster = this.connectionSbj.getValue().cluster) {
@@ -169,9 +251,34 @@ export default class IgniteAgentManager {
         }
     }
 
+    updateCluster(newCluster) {
+        const state = this.connectionSbj.getValue();
+
+        const oldCluster = _.find(state.clusters, (cluster) => cluster.id === newCluster.id);
+
+        if (!_.isNil(oldCluster)) {
+            oldCluster.nids = newCluster.nids;
+            oldCluster.addresses = newCluster.addresses;
+            oldCluster.clusterVersion = newCluster.clusterVersion;
+            oldCluster.active = newCluster.active;
+
+            this.connectionSbj.next(state);
+        }
+    }
+
+    switchCluster(cluster) {
+        const state = this.connectionSbj.getValue();
+
+        state.updateCluster(cluster);
+
+        this.connectionSbj.next(state);
+
+        this.saveToStorage(cluster);
+    }
+
     /**
      * @param states
-     * @returns {Promise}
+     * @returns {ng.IPromise}
      */
     awaitConnectionState(...states) {
         const defer = this.$q.defer();
@@ -204,31 +311,31 @@ export default class IgniteAgentManager {
     /**
      * @param {String} backText
      * @param {String} [backState]
-     * @returns {Promise}
+     * @returns {ng.IPromise}
      */
     startAgentWatch(backText, backState) {
-        const self = this;
+        this.backText = backText;
+        this.backState = backState;
 
-        self.backText = backText;
-        self.backState = backState;
-
-        const conn = self.connectionSbj.getValue();
+        const conn = this.connectionSbj.getValue();
 
         conn.useConnectedCluster();
 
-        self.connectionSbj.next(conn);
+        this.connectionSbj.next(conn);
 
-        self.modalSubscription = this.connectionSbj.subscribe({
+        this.modalSubscription && this.modalSubscription.unsubscribe();
+
+        this.modalSubscription = this.connectionSbj.subscribe({
             next: ({state}) => {
                 switch (state) {
                     case State.CONNECTED:
                     case State.CLUSTER_DISCONNECTED:
-                        this.AgentModal.hide();
+                        this.agentModal.hide();
 
                         break;
 
                     case State.AGENT_DISCONNECTED:
-                        this.AgentModal.agentDisconnected(self.backText, self.backState);
+                        this.agentModal.agentDisconnected(this.backText, this.backState);
 
                         break;
 
@@ -238,41 +345,41 @@ export default class IgniteAgentManager {
             }
         });
 
-        return self.awaitAgent();
+        return this.awaitAgent();
     }
 
     /**
      * @param {String} backText
      * @param {String} [backState]
-     * @returns {Promise}
+     * @returns {ng.IPromise}
      */
     startClusterWatch(backText, backState) {
-        const self = this;
+        this.backText = backText;
+        this.backState = backState;
 
-        self.backText = backText;
-        self.backState = backState;
-
-        const conn = self.connectionSbj.getValue();
+        const conn = this.connectionSbj.getValue();
 
         conn.useConnectedCluster();
 
-        self.connectionSbj.next(conn);
+        this.connectionSbj.next(conn);
 
-        self.modalSubscription = this.connectionSbj.subscribe({
+        this.modalSubscription && this.modalSubscription.unsubscribe();
+
+        this.modalSubscription = this.connectionSbj.subscribe({
             next: ({state}) => {
                 switch (state) {
                     case State.CONNECTED:
-                        this.AgentModal.hide();
+                        this.agentModal.hide();
 
                         break;
 
                     case State.AGENT_DISCONNECTED:
-                        this.AgentModal.agentDisconnected(self.backText, self.backState);
+                        this.agentModal.agentDisconnected(this.backText, this.backState);
 
                         break;
 
                     case State.CLUSTER_DISCONNECTED:
-                        self.AgentModal.clusterDisconnected(self.backText, self.backState);
+                        this.agentModal.clusterDisconnected(this.backText, this.backState);
 
                         break;
 
@@ -282,13 +389,13 @@ export default class IgniteAgentManager {
             }
         });
 
-        return self.awaitCluster();
+        this.$transitions.onExit({}, () => this.stopWatch());
+
+        return this.awaitCluster();
     }
 
     stopWatch() {
         this.modalSubscription && this.modalSubscription.unsubscribe();
-
-        this.AgentModal.hide();
 
         this.promises.forEach((promise) => promise.reject('Agent watch stopped.'));
     }
@@ -296,11 +403,11 @@ export default class IgniteAgentManager {
     /**
      *
      * @param {String} event
-     * @param {Object} [args]
-     * @returns {Promise}
+     * @param {Object} [payload]
+     * @returns {ng.IPromise}
      * @private
      */
-    _emit(event, ...args) {
+    _sendToAgent(event, payload = {}) {
         if (!this.socket)
             return this.$q.reject('Failed to connect to server');
 
@@ -314,63 +421,122 @@ export default class IgniteAgentManager {
 
         this.socket.on('disconnect', onDisconnect);
 
-        args.push((err, res) => {
+        this.socket.emit(event, payload, (err, res) => {
             this.socket.removeListener('disconnect', onDisconnect);
 
             if (err)
-                latch.reject(err);
+                return latch.reject(err);
 
             latch.resolve(res);
         });
-
-        this.socket.emit(event, ...args);
 
         return latch.promise;
     }
 
     drivers() {
-        return this._emit('schemaImport:drivers');
+        return this._sendToAgent('schemaImport:drivers');
     }
 
     /**
-     * @param {Object} jdbcDriverJar
-     * @param {Object} jdbcDriverClass
-     * @param {Object} jdbcUrl
-     * @param {Object} user
-     * @param {Object} password
-     * @returns {Promise}
+     * @param {{jdbcDriverJar: String, jdbcDriverClass: String, jdbcUrl: String, user: String, password: String}}
+     * @returns {ng.IPromise}
      */
     schemas({jdbcDriverJar, jdbcDriverClass, jdbcUrl, user, password}) {
         const info = {user, password};
 
-        return this._emit('schemaImport:schemas', {jdbcDriverJar, jdbcDriverClass, jdbcUrl, info});
+        return this._sendToAgent('schemaImport:schemas', {jdbcDriverJar, jdbcDriverClass, jdbcUrl, info});
     }
 
     /**
-     * @param {Object} jdbcDriverJar
-     * @param {Object} jdbcDriverClass
-     * @param {Object} jdbcUrl
-     * @param {Object} user
-     * @param {Object} password
-     * @param {Object} schemas
-     * @param {Object} tablesOnly
-     * @returns {Promise} Promise on list of tables (see org.apache.ignite.schema.parser.DbTable java class)
+     * @param {{jdbcDriverJar: String, jdbcDriverClass: String, jdbcUrl: String, user: String, password: String, schemas: String, tablesOnly: String}}
+     * @returns {ng.IPromise} Promise on list of tables (see org.apache.ignite.schema.parser.DbTable java class)
      */
     tables({jdbcDriverJar, jdbcDriverClass, jdbcUrl, user, password, schemas, tablesOnly}) {
         const info = {user, password};
 
-        return this._emit('schemaImport:metadata', {jdbcDriverJar, jdbcDriverClass, jdbcUrl, info, schemas, tablesOnly});
+        return this._sendToAgent('schemaImport:metadata', {jdbcDriverJar, jdbcDriverClass, jdbcUrl, info, schemas, tablesOnly});
     }
 
     /**
-     *
+     * @param {Object} cluster
+     * @param {Object} credentials
      * @param {String} event
-     * @param {Object} [args]
+     * @param {Object} params
+     * @returns {ng.IPromise}
+     * @private
+     */
+    _executeOnActiveCluster(cluster, credentials, event, params) {
+        return this._sendToAgent(event, {clusterId: cluster.id, params, credentials})
+            .then((res) => {
+                const {status = SuccessStatus.STATUS_SUCCESS} = res;
+
+                switch (status) {
+                    case SuccessStatus.STATUS_SUCCESS:
+                        if (cluster.secured)
+                            this.clustersSecrets.get(cluster.id).sessionToken = res.sessionToken;
+
+                        if (res.zipped)
+                            return this.pool.postMessage(res.data);
+
+                        return res;
+
+                    case SuccessStatus.STATUS_FAILED:
+                        if (res.error.startsWith('Failed to handle request - unknown session token (maybe expired session)')) {
+                            this.clustersSecrets.get(cluster.id).resetSessionToken();
+
+                            return this._executeOnCluster(event, params);
+                        }
+
+                        throw new Error(res.error);
+
+                    case SuccessStatus.AUTH_FAILED:
+                        this.clustersSecrets.get(cluster.id).resetCredentials();
+
+                        throw new Error('Cluster authentication failed. Incorrect user and/or password.');
+
+                    case SuccessStatus.SECURITY_CHECK_FAILED:
+                        throw new Error('Access denied. You are not authorized to access this functionality.');
+
+                    default:
+                        throw new Error('Illegal status in node response');
+                }
+            });
+    }
+
+    /**
+     * @param {String} event
+     * @param {Object} params
      * @returns {Promise}
      * @private
      */
-    _rest(event, ...args) {
-        return this._emit(event, _.get(this.connectionSbj.getValue(), 'cluster.id'), ...args);
+    _executeOnCluster(event, params) {
+        if (this.isDemoMode())
+            return Promise.resolve(this._executeOnActiveCluster({}, {}, event, params));
+
+        return this.connectionSbj.first().toPromise()
+            .then(({cluster}) => {
+                if (_.isNil(cluster))
+                    throw new Error('Failed to execute request on cluster.');
+
+                if (cluster.secured) {
+                    return Promise.resolve(this.clustersSecrets.get(cluster.id))
+                        .then((secrets) => {
+                            if (secrets.hasCredentials())
+                                return secrets;
+
+                            return this.ClusterLoginSrv.askCredentials(secrets)
+                                .then((secrets) => {
+                                    this.clustersSecrets.put(cluster.id, secrets);
+
+                                    return secrets;
+                                });
+                        })
+                        .then((secrets) => ({cluster, credentials: secrets.getCredentials()}));
+                }
+
+                return {cluster, credentials: {}};
+            })
+            .then(({cluster, credentials}) => this._executeOnActiveCluster(cluster, credentials, event, params));
     }
 
     /**
@@ -379,15 +545,14 @@ export default class IgniteAgentManager {
      * @returns {Promise}
      */
     topology(attr = false, mtr = false) {
-        return this._rest('node:rest', {cmd: 'top', attr, mtr});
+        return this._executeOnCluster('node:rest', {cmd: 'top', attr, mtr});
     }
 
     /**
-     * @param {String} [cacheName] Cache name.
      * @returns {Promise}
      */
-    metadata(cacheName) {
-        return this._rest('node:rest', {cmd: 'metadata', cacheName: maskNull(cacheName)})
+    metadata() {
+        return this._executeOnCluster('node:rest', {cmd: 'metadata'})
             .then((caches) => {
                 let types = [];
 
@@ -449,7 +614,7 @@ export default class IgniteAgentManager {
 
                     columns = _.sortBy(columns, 'name');
 
-                    if (!_.isEmpty(indexes)) {
+                    if (nonEmpty(indexes)) {
                         columns = columns.concat({
                             type: 'indexes',
                             name: 'Indexes',
@@ -490,7 +655,7 @@ export default class IgniteAgentManager {
 
         nids = _.isArray(nids) ? nids.join(';') : maskNull(nids);
 
-        return this._rest('node:visor', taskId, nids, ...args);
+        return this._executeOnCluster('node:visor', {taskId, nids, args});
     }
 
     /**
@@ -501,18 +666,26 @@ export default class IgniteAgentManager {
      * @param {Boolean} enforceJoinOrder Flag whether enforce join order is enabled.
      * @param {Boolean} replicatedOnly Flag whether query contains only replicated tables.
      * @param {Boolean} local Flag whether to execute query locally.
-     * @param {int} pageSz
+     * @param {Number} pageSz
+     * @param {Boolean} [lazy] query flag.
+     * @param {Boolean} [collocated] Collocated query.
      * @returns {Promise}
      */
-    querySql(nid, cacheName, query, nonCollocatedJoins, enforceJoinOrder, replicatedOnly, local, pageSz) {
-        if (this.ignite2x) {
-            return this.visorTask('querySqlX2', nid, cacheName, query, nonCollocatedJoins, enforceJoinOrder, replicatedOnly, local, pageSz)
-                .then(({error, result}) => {
-                    if (_.isEmpty(error))
-                        return result;
+    querySql(nid, cacheName, query, nonCollocatedJoins, enforceJoinOrder, replicatedOnly, local, pageSz, lazy = false, collocated = false) {
+        if (this.available(IGNITE_2_0)) {
+            let args = [cacheName, query, nonCollocatedJoins, enforceJoinOrder, replicatedOnly, local, pageSz];
 
-                    return Promise.reject(error);
-                });
+            if (this.available(...COLLOCATED_QUERY_SINCE))
+                args = [...args, lazy, collocated];
+            else if (this.available(...LAZY_QUERY_SINCE))
+                args = [...args, lazy];
+
+            return this.visorTask('querySqlX2', nid, ...args).then(({error, result}) => {
+                if (_.isEmpty(error))
+                    return result;
+
+                return Promise.reject(error);
+            });
         }
 
         cacheName = _.isEmpty(cacheName) ? null : cacheName;
@@ -537,12 +710,12 @@ export default class IgniteAgentManager {
 
     /**
      * @param {String} nid Node id.
-     * @param {int} queryId
-     * @param {int} pageSize
+     * @param {Number} queryId
+     * @param {Number} pageSize
      * @returns {Promise}
      */
     queryNextPage(nid, queryId, pageSize) {
-        if (this.ignite2x)
+        if (this.available(IGNITE_2_0))
             return this.visorTask('queryFetchX2', nid, queryId, pageSize);
 
         return this.visorTask('queryFetch', nid, queryId, pageSize);
@@ -556,9 +729,11 @@ export default class IgniteAgentManager {
      * @param {Boolean} enforceJoinOrder Flag whether enforce join order is enabled.
      * @param {Boolean} replicatedOnly Flag whether query contains only replicated tables.
      * @param {Boolean} local Flag whether to execute query locally.
+     * @param {Boolean} lazy query flag.
+     * @param {Boolean} collocated Collocated query.
      * @returns {Promise}
      */
-    querySqlGetAll(nid, cacheName, query, nonCollocatedJoins, enforceJoinOrder, replicatedOnly, local) {
+    querySqlGetAll(nid, cacheName, query, nonCollocatedJoins, enforceJoinOrder, replicatedOnly, local, lazy, collocated) {
         // Page size for query.
         const pageSz = 1024;
 
@@ -576,22 +751,22 @@ export default class IgniteAgentManager {
                 });
         };
 
-        return this.querySql(nid, cacheName, query, nonCollocatedJoins, enforceJoinOrder, replicatedOnly, local, pageSz)
+        return this.querySql(nid, cacheName, query, nonCollocatedJoins, enforceJoinOrder, replicatedOnly, local, pageSz, lazy, collocated)
             .then(fetchResult);
     }
 
     /**
      * @param {String} nid Node id.
-     * @param {int} [queryId]
+     * @param {Number} [queryId]
      * @returns {Promise}
      */
     queryClose(nid, queryId) {
-        if (this.ignite2x) {
+        if (this.available(IGNITE_2_0)) {
             return this.visorTask('queryCloseX2', nid, 'java.util.Map', 'java.util.UUID', 'java.util.Collection',
                 nid + '=' + queryId);
         }
 
-        return this.visorTask('queryClose', nid, queryId);
+        return this.visorTask('queryClose', nid, nid, queryId);
     }
 
     /**
@@ -602,11 +777,11 @@ export default class IgniteAgentManager {
      * @param {Boolean} caseSensitive Case sensitive filtration.
      * @param {Boolean} near Scan near cache.
      * @param {Boolean} local Flag whether to execute query locally.
-     * @param {int} pageSize Page size.
+     * @param {Number} pageSize Page size.
      * @returns {Promise}
      */
     queryScan(nid, cacheName, filter, regEx, caseSensitive, near, local, pageSize) {
-        if (this.ignite2x) {
+        if (this.available(IGNITE_2_0)) {
             return this.visorTask('queryScanX2', nid, cacheName, filter, regEx, caseSensitive, near, local, pageSize)
                 .then(({error, result}) => {
                     if (_.isEmpty(error))
@@ -629,7 +804,6 @@ export default class IgniteAgentManager {
     }
 
     /**
-     /**
      * @param {String} nid Node id.
      * @param {String} cacheName Cache name.
      * @param {String} filter Filter text.
@@ -659,5 +833,22 @@ export default class IgniteAgentManager {
 
         return this.queryScan(nid, cacheName, filter, regEx, caseSensitive, near, local, pageSz)
             .then(fetchResult);
+    }
+
+    /**
+     * Change cluster active state.
+     *
+     * @returns {Promise}
+     */
+    toggleClusterState() {
+        const { cluster } = this.connectionSbj.getValue();
+        const active = !cluster.active;
+
+        return this.visorTask('toggleClusterState', null, active)
+            .then(() => this.updateCluster({ ...cluster, active }));
+    }
+
+    hasCredentials(clusterId) {
+        return this.clustersSecrets.get(clusterId).hasCredentials();
     }
 }

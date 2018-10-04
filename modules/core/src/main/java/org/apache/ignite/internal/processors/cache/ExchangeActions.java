@@ -20,8 +20,8 @@ package org.apache.ignite.internal.processors.cache;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -48,6 +48,9 @@ public class ExchangeActions {
 
     /** */
     private Map<String, CacheActionData> cachesToResetLostParts;
+
+    /** */
+    private LocalJoinCachesContext locJoinCtx;
 
     /** */
     private StateChangeRequest stateChangeReq;
@@ -96,17 +99,18 @@ public class ExchangeActions {
     /**
      * @return Stop cache requests.
      */
-    Collection<CacheActionData> cacheStopRequests() {
+    public Collection<CacheActionData> cacheStopRequests() {
         return cachesToStop != null ? cachesToStop.values() : Collections.<CacheActionData>emptyList();
     }
 
     /**
      * @param ctx Context.
+     * @param err Error if any.
      */
-    public void completeRequestFutures(GridCacheSharedContext ctx) {
-        completeRequestFutures(cachesToStart, ctx);
-        completeRequestFutures(cachesToStop, ctx);
-        completeRequestFutures(cachesToResetLostParts, ctx);
+    public void completeRequestFutures(GridCacheSharedContext ctx, Throwable err) {
+        completeRequestFutures(cachesToStart, ctx, err);
+        completeRequestFutures(cachesToStop, ctx, err);
+        completeRequestFutures(cachesToResetLostParts, ctx, err);
     }
 
     /**
@@ -127,10 +131,14 @@ public class ExchangeActions {
      * @param map Actions map.
      * @param ctx Context.
      */
-    private void completeRequestFutures(Map<String, CacheActionData> map, GridCacheSharedContext ctx) {
+    private void completeRequestFutures(
+        Map<String, CacheActionData> map,
+        GridCacheSharedContext ctx,
+        @Nullable Throwable err
+    ) {
         if (map != null) {
             for (CacheActionData req : map.values())
-                ctx.cache().completeCacheStartFuture(req.req, true, null);
+                ctx.cache().completeCacheStartFuture(req.req, (err == null), err);
         }
     }
 
@@ -146,7 +154,7 @@ public class ExchangeActions {
      */
     public Set<String> cachesToResetLostPartitions() {
         Set<String> caches = null;
-        
+
         if (cachesToResetLostParts != null)
             caches = new HashSet<>(cachesToResetLostParts.keySet());
 
@@ -194,14 +202,21 @@ public class ExchangeActions {
      * @return {@code True} if has deactivate request.
      */
     public boolean deactivate() {
-        return stateChangeReq != null && !stateChangeReq.activate();
+        return stateChangeReq != null && stateChangeReq.activeChanged() && !stateChangeReq.activate();
     }
 
     /**
      * @return {@code True} if has activate request.
      */
     public boolean activate() {
-        return stateChangeReq != null && stateChangeReq.activate();
+        return stateChangeReq != null && stateChangeReq.activeChanged() && stateChangeReq.activate();
+    }
+
+    /**
+     * @return {@code True} if has baseline topology change request.
+     */
+    public boolean changedBaseline() {
+        return stateChangeReq != null && !stateChangeReq.activeChanged();
     }
 
     /**
@@ -224,7 +239,7 @@ public class ExchangeActions {
         assert desc != null;
 
         if (map == null)
-            map = new HashMap<>();
+            map = new LinkedHashMap<>();
 
         CacheActionData old = map.put(req.cacheName(), new CacheActionData(req, desc));
 
@@ -341,7 +356,22 @@ public class ExchangeActions {
             F.isEmpty(cacheGrpsToStart) &&
             F.isEmpty(cacheGrpsToStop) &&
             F.isEmpty(cachesToResetLostParts) &&
-            stateChangeReq == null;
+            stateChangeReq == null &&
+            locJoinCtx == null;
+    }
+
+    /**
+     * @param locJoinCtx Caches local join context.
+     */
+    public void localJoinContext(LocalJoinCachesContext locJoinCtx) {
+        this.locJoinCtx = locJoinCtx;
+    }
+
+    /**
+     * @return Caches local join context.
+     */
+    public LocalJoinCachesContext localJoinContext() {
+        return locJoinCtx;
     }
 
     /**
@@ -384,7 +414,7 @@ public class ExchangeActions {
     /**
      *
      */
-    static class CacheGroupActionData {
+    public static class CacheGroupActionData {
         /** */
         private final CacheGroupDescriptor desc;
 

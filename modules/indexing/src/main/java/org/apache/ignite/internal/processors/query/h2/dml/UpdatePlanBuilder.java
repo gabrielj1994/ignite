@@ -18,49 +18,66 @@
 package org.apache.ignite.internal.processors.query.h2.dml;
 
 import java.lang.reflect.Constructor;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import javax.cache.CacheException;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.binary.BinaryObject;
 import org.apache.ignite.binary.BinaryObjectBuilder;
+import org.apache.ignite.cache.query.SqlFieldsQuery;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
+import org.apache.ignite.internal.processors.cache.mvcc.MvccUtils;
+import org.apache.ignite.internal.processors.cache.query.GridCacheTwoStepQuery;
 import org.apache.ignite.internal.processors.cache.query.IgniteQueryErrorCode;
+import org.apache.ignite.internal.processors.cache.query.SqlFieldsQueryEx;
 import org.apache.ignite.internal.processors.query.GridQueryProperty;
 import org.apache.ignite.internal.processors.query.GridQueryTypeDescriptor;
 import org.apache.ignite.internal.processors.query.IgniteSQLException;
 import org.apache.ignite.internal.processors.query.QueryUtils;
 import org.apache.ignite.internal.processors.query.h2.DmlStatementsProcessor;
+import org.apache.ignite.internal.processors.query.h2.IgniteH2Indexing;
 import org.apache.ignite.internal.processors.query.h2.opt.GridH2RowDescriptor;
 import org.apache.ignite.internal.processors.query.h2.opt.GridH2Table;
-import org.apache.ignite.internal.processors.query.h2.sql.DmlAstUtils;
+import org.apache.ignite.internal.processors.query.h2.sql.GridSqlAlias;
+import org.apache.ignite.internal.processors.query.h2.sql.GridSqlAst;
 import org.apache.ignite.internal.processors.query.h2.sql.GridSqlColumn;
+import org.apache.ignite.internal.processors.query.h2.sql.GridSqlConst;
 import org.apache.ignite.internal.processors.query.h2.sql.GridSqlDelete;
 import org.apache.ignite.internal.processors.query.h2.sql.GridSqlElement;
 import org.apache.ignite.internal.processors.query.h2.sql.GridSqlInsert;
 import org.apache.ignite.internal.processors.query.h2.sql.GridSqlMerge;
+import org.apache.ignite.internal.processors.query.h2.sql.GridSqlParameter;
 import org.apache.ignite.internal.processors.query.h2.sql.GridSqlQuery;
 import org.apache.ignite.internal.processors.query.h2.sql.GridSqlQueryParser;
+import org.apache.ignite.internal.processors.query.h2.sql.GridSqlQuerySplitter;
 import org.apache.ignite.internal.processors.query.h2.sql.GridSqlSelect;
 import org.apache.ignite.internal.processors.query.h2.sql.GridSqlStatement;
 import org.apache.ignite.internal.processors.query.h2.sql.GridSqlTable;
 import org.apache.ignite.internal.processors.query.h2.sql.GridSqlUnion;
 import org.apache.ignite.internal.processors.query.h2.sql.GridSqlUpdate;
+import org.apache.ignite.internal.sql.command.SqlBulkLoadCommand;
 import org.apache.ignite.internal.util.GridUnsafe;
+import org.apache.ignite.internal.util.typedef.F;
+import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.h2.command.Prepared;
 import org.h2.table.Column;
 import org.jetbrains.annotations.Nullable;
 
-import static org.apache.ignite.internal.processors.query.h2.opt.GridH2AbstractKeyValueRow.DEFAULT_COLUMNS_COUNT;
+import static org.apache.ignite.internal.processors.query.h2.opt.GridH2KeyValueRowOnheap.DEFAULT_COLUMNS_COUNT;
 
 /**
  * Logic for building update plans performed by {@link DmlStatementsProcessor}.
  */
 public final class UpdatePlanBuilder {
-    /** */
+    /**
+     * Constructor.
+     */
     private UpdatePlanBuilder() {
         // No-op.
     }
@@ -70,30 +87,76 @@ public final class UpdatePlanBuilder {
      * if available.
      *
      * @param prepared H2's {@link Prepared}.
+     * @param loc Local query flag.
+     * @param idx Indexing.
+     * @param conn Connection.
+     * @param fieldsQry Original query.
      * @return Update plan.
      */
-    public static UpdatePlan planForStatement(Prepared prepared,
-        @Nullable Integer errKeysPos) throws IgniteCheckedException {
+    public static UpdatePlan planForStatement(Prepared prepared, boolean loc, IgniteH2Indexing idx,
+        @Nullable Connection conn, @Nullable SqlFieldsQuery fieldsQry, @Nullable Integer errKeysPos)
+        throws IgniteCheckedException {
         assert !prepared.isQuery();
 
-        GridSqlStatement stmt = new GridSqlQueryParser(false).parse(prepared);
+        GridSqlQueryParser parser = new GridSqlQueryParser(false);
+
+        GridSqlStatement stmt = parser.parse(prepared);
+
+        boolean mvccEnabled = false;
+
+        GridCacheContext cctx = null;
+
+        // check all involved caches
+        for (Object o : parser.objectsMap().values()) {
+            if (o instanceof GridSqlInsert)
+                o = ((GridSqlInsert)o).into();
+            else if (o instanceof GridSqlMerge)
+                o = ((GridSqlMerge)o).into();
+            else if (o instanceof GridSqlDelete)
+                o = ((GridSqlDelete)o).from();
+
+            if (o instanceof GridSqlAlias)
+                o = GridSqlAlias.unwrap((GridSqlAst)o);
+
+            if (o instanceof GridSqlTable) {
+                if (((GridSqlTable)o).dataTable() == null) { // Check for virtual tables.
+                    throw new IgniteSQLException("Operation not supported for table '" +
+                        ((GridSqlTable)o).tableName() + "'", IgniteQueryErrorCode.UNSUPPORTED_OPERATION);
+                }
+
+                if (cctx == null)
+                    mvccEnabled = (cctx = (((GridSqlTable)o).dataTable()).cache()).mvccEnabled();
+                else if (((GridSqlTable)o).dataTable().cache().mvccEnabled() != mvccEnabled)
+                    MvccUtils.throwAtomicityModesMismatchException(cctx, ((GridSqlTable)o).dataTable().cache());
+            }
+        }
 
         if (stmt instanceof GridSqlMerge || stmt instanceof GridSqlInsert)
-            return planForInsert(stmt);
+            return planForInsert(stmt, loc, idx, mvccEnabled, conn, fieldsQry);
+        else if (stmt instanceof GridSqlUpdate || stmt instanceof GridSqlDelete)
+            return planForUpdate(stmt, loc, idx, mvccEnabled, conn, fieldsQry, errKeysPos);
         else
-            return planForUpdate(stmt, errKeysPos);
+            throw new IgniteSQLException("Unsupported operation: " + prepared.getSQL(),
+                    IgniteQueryErrorCode.UNSUPPORTED_OPERATION);
     }
 
     /**
      * Prepare update plan for INSERT or MERGE.
      *
      * @param stmt INSERT or MERGE statement.
+     * @param loc Local query flag.
+     * @param idx Indexing.
+     * @param mvccEnabled Mvcc flag.
+     * @param conn Connection.
+     * @param fieldsQuery Original query.
      * @return Update plan.
      * @throws IgniteCheckedException if failed.
      */
     @SuppressWarnings("ConstantConditions")
-    private static UpdatePlan planForInsert(GridSqlStatement stmt) throws IgniteCheckedException {
-        GridSqlQuery sel;
+    private static UpdatePlan planForInsert(GridSqlStatement stmt, boolean loc, IgniteH2Indexing idx,
+        boolean mvccEnabled, @Nullable Connection conn, @Nullable SqlFieldsQuery fieldsQuery)
+        throws IgniteCheckedException {
+        GridSqlQuery sel = null;
 
         GridSqlElement target;
 
@@ -107,15 +170,27 @@ public final class UpdatePlanBuilder {
 
         GridH2RowDescriptor desc;
 
+        List<GridSqlElement[]> elRows = null;
+
         if (stmt instanceof GridSqlInsert) {
             GridSqlInsert ins = (GridSqlInsert) stmt;
             target = ins.into();
 
-            tbl = gridTableForElement(target);
-            desc = tbl.dataTable().rowDescriptor();
+            tbl = DmlAstUtils.gridTableForElement(target);
+
+            GridH2Table h2Tbl = tbl.dataTable();
+
+            assert h2Tbl != null;
+
+            desc = h2Tbl.rowDescriptor();
 
             cols = ins.columns();
-            sel = DmlAstUtils.selectForInsertOrMerge(cols, ins.rows(), ins.query(), desc);
+
+            if (noQuery(ins.rows()))
+                elRows = ins.rows();
+            else
+                sel = DmlAstUtils.selectForInsertOrMerge(cols, ins.rows(), ins.query());
+
             isTwoStepSubqry = (ins.query() != null);
             rowsNum = isTwoStepSubqry ? 0 : ins.rows().size();
         }
@@ -124,27 +199,26 @@ public final class UpdatePlanBuilder {
 
             target = merge.into();
 
-            tbl = gridTableForElement(target);
+            tbl = DmlAstUtils.gridTableForElement(target);
             desc = tbl.dataTable().rowDescriptor();
 
-            // This check also protects us from attempts to update key or its fields directly -
-            // when no key except cache key can be used, it will serve only for uniqueness checks,
-            // not for updates, and hence will allow putting new pairs only.
-            // We don't quote _key and _val column names on CREATE TABLE, so they are always uppercase here.
-            GridSqlColumn[] keys = merge.keys();
-            if (keys.length != 1 || !desc.isKeyColumn(tbl.dataTable().getColumn(keys[0].columnName()).getColumnId()))
-                throw new CacheException("SQL MERGE does not support arbitrary keys");
-
             cols = merge.columns();
-            sel = DmlAstUtils.selectForInsertOrMerge(cols, merge.rows(), merge.query(), desc);
+
+            if (noQuery(merge.rows()))
+                elRows = merge.rows();
+            else
+                sel = DmlAstUtils.selectForInsertOrMerge(cols, merge.rows(), merge.query());
+
             isTwoStepSubqry = (merge.query() != null);
             rowsNum = isTwoStepSubqry ? 0 : merge.rows().size();
         }
-        else throw new IgniteSQLException("Unexpected DML operation [cls=" + stmt.getClass().getName() + ']',
+        else {
+            throw new IgniteSQLException("Unexpected DML operation [cls=" + stmt.getClass().getName() + ']',
                 IgniteQueryErrorCode.UNEXPECTED_OPERATION);
+        }
 
         // Let's set the flag only for subqueries that have their FROM specified.
-        isTwoStepSubqry = (isTwoStepSubqry && (sel instanceof GridSqlUnion ||
+        isTwoStepSubqry &= (sel != null && (sel instanceof GridSqlUnion ||
             (sel instanceof GridSqlSelect && ((GridSqlSelect) sel).from() != null)));
 
         int keyColIdx = -1;
@@ -196,26 +270,96 @@ public final class UpdatePlanBuilder {
         KeyValueSupplier keySupplier = createSupplier(cctx, desc.type(), keyColIdx, hasKeyProps, true, false);
         KeyValueSupplier valSupplier = createSupplier(cctx, desc.type(), valColIdx, hasValProps, false, false);
 
-        if (stmt instanceof GridSqlMerge)
-            return UpdatePlan.forMerge(tbl.dataTable(), colNames, colTypes, keySupplier, valSupplier, keyColIdx,
-                valColIdx, sel.getSQL(), !isTwoStepSubqry, rowsNum);
-        else
-            return UpdatePlan.forInsert(tbl.dataTable(), colNames, colTypes, keySupplier, valSupplier, keyColIdx,
-                valColIdx, sel.getSQL(), !isTwoStepSubqry, rowsNum);
+        String selectSql = sel != null ? sel.getSQL() : null;
+
+        DmlDistributedPlanInfo distributed = (rowsNum == 0 && !F.isEmpty(selectSql)) ?
+            checkPlanCanBeDistributed(idx, mvccEnabled, conn, fieldsQuery, loc, selectSql,
+            tbl.dataTable().cacheName()) : null;
+
+        UpdateMode mode = stmt instanceof GridSqlMerge ? UpdateMode.MERGE : UpdateMode.INSERT;
+
+        List<List<DmlArgument>> rows = null;
+
+        if (elRows != null) {
+            assert sel == null;
+
+            rows = new ArrayList<>(elRows.size());
+
+            for (GridSqlElement[] elRow : elRows) {
+                List<DmlArgument> row = new ArrayList<>(cols.length);
+
+                for (GridSqlElement el : elRow) {
+                    DmlArgument arg = DmlArguments.create(el);
+
+                    row.add(arg);
+                }
+
+                rows.add(row);
+            }
+        }
+
+        return new UpdatePlan(
+            mode,
+            tbl.dataTable(),
+            colNames,
+            colTypes,
+            keySupplier,
+            valSupplier,
+            keyColIdx,
+            valColIdx,
+            selectSql,
+            !isTwoStepSubqry,
+            rows,
+            rowsNum,
+            null,
+            distributed
+        );
+    }
+
+    /**
+     * @param rows Insert rows.
+     * @return {@code True} if no query optimisation may be used.
+     */
+    private static boolean noQuery(List<GridSqlElement[]> rows) {
+        if (F.isEmpty(rows))
+            return false;
+
+        boolean noQry = true;
+
+        for (int i = 0; i < rows.size(); i++) {
+            GridSqlElement[] row = rows.get(i);
+
+            for (int i1 = 0; i1 < row.length; i1++) {
+                GridSqlElement el = row[i1];
+
+                if(!(noQry &=  (el instanceof GridSqlConst || el instanceof GridSqlParameter)))
+                    return noQry;
+
+            }
+        }
+
+        return true;
     }
 
     /**
      * Prepare update plan for UPDATE or DELETE.
      *
      * @param stmt UPDATE or DELETE statement.
+     * @param loc Local query flag.
+     * @param idx Indexing.
+     * @param mvccEnabled Mvcc flag.
+     * @param conn Connection.
+     * @param fieldsQuery Original query.
      * @param errKeysPos index to inject param for re-run keys at. Null if it's not a re-run plan.
      * @return Update plan.
      * @throws IgniteCheckedException if failed.
      */
-    private static UpdatePlan planForUpdate(GridSqlStatement stmt, @Nullable Integer errKeysPos) throws IgniteCheckedException {
+    private static UpdatePlan planForUpdate(GridSqlStatement stmt, boolean loc, IgniteH2Indexing idx,
+        boolean mvccEnabled, @Nullable Connection conn, @Nullable SqlFieldsQuery fieldsQuery,
+        @Nullable Integer errKeysPos) throws IgniteCheckedException {
         GridSqlElement target;
 
-        FastUpdateArguments fastUpdate;
+        FastUpdate fastUpdate;
 
         UpdateMode mode;
 
@@ -223,7 +367,7 @@ public final class UpdatePlanBuilder {
             // Let's verify that user is not trying to mess with key's columns directly
             verifyUpdateColumns(stmt);
 
-            GridSqlUpdate update = (GridSqlUpdate) stmt;
+            GridSqlUpdate update = (GridSqlUpdate)stmt;
             target = update.target();
             fastUpdate = DmlAstUtils.getFastUpdateArgs(update);
             mode = UpdateMode.UPDATE;
@@ -238,18 +382,27 @@ public final class UpdatePlanBuilder {
             throw new IgniteSQLException("Unexpected DML operation [cls=" + stmt.getClass().getName() + ']',
                 IgniteQueryErrorCode.UNEXPECTED_OPERATION);
 
-        GridSqlTable tbl = gridTableForElement(target);
+        GridSqlTable tbl = DmlAstUtils.gridTableForElement(target);
 
-        GridH2Table gridTbl = tbl.dataTable();
+        GridH2Table h2Tbl = tbl.dataTable();
 
-        GridH2RowDescriptor desc = gridTbl.rowDescriptor();
+        assert h2Tbl != null;
+
+        GridH2RowDescriptor desc = h2Tbl.rowDescriptor();
 
         if (desc == null)
-            throw new IgniteSQLException("Row descriptor undefined for table '" + gridTbl.getName() + "'",
+            throw new IgniteSQLException("Row descriptor undefined for table '" + h2Tbl.getName() + "'",
                 IgniteQueryErrorCode.NULL_TABLE_DESCRIPTOR);
 
-        if (fastUpdate != null)
-            return UpdatePlan.forFastUpdate(mode, gridTbl, fastUpdate);
+        if (fastUpdate != null) {
+            return new UpdatePlan(
+                mode,
+                h2Tbl,
+                null,
+                fastUpdate,
+                null
+            );
+        }
         else {
             GridSqlSelect sel;
 
@@ -267,8 +420,9 @@ public final class UpdatePlanBuilder {
 
                     colTypes[i] = updatedCols.get(i).resultType().type();
 
-                    Column column = updatedCols.get(i).column();
-                    if (desc.isValueColumn(column.getColumnId()))
+                    Column col = updatedCols.get(i).column();
+
+                    if (desc.isValueColumn(col.getColumnId()))
                         valColIdx = i;
                 }
 
@@ -284,19 +438,137 @@ public final class UpdatePlanBuilder {
 
                 int newValColIdx = (hasNewVal ? valColIdx : 1);
 
-                KeyValueSupplier newValSupplier = createSupplier(desc.context(), desc.type(), newValColIdx, hasProps,
+                KeyValueSupplier valSupplier = createSupplier(desc.context(), desc.type(), newValColIdx, hasProps,
                     false, true);
 
                 sel = DmlAstUtils.selectForUpdate((GridSqlUpdate) stmt, errKeysPos);
 
-                return UpdatePlan.forUpdate(gridTbl, colNames, colTypes, newValSupplier, valColIdx, sel.getSQL());
+                String selectSql = sel.getSQL();
+
+                DmlDistributedPlanInfo distributed = F.isEmpty(selectSql) ? null :
+                    checkPlanCanBeDistributed(idx, mvccEnabled, conn, fieldsQuery, loc, selectSql,
+                    tbl.dataTable().cacheName());
+
+                return new UpdatePlan(
+                    UpdateMode.UPDATE,
+                    h2Tbl,
+                    colNames,
+                    colTypes,
+                    null,
+                    valSupplier,
+                    -1,
+                    valColIdx,
+                    selectSql,
+                    false,
+                    null,
+                    0,
+                    null,
+                    distributed
+                );
             }
             else {
                 sel = DmlAstUtils.selectForDelete((GridSqlDelete) stmt, errKeysPos);
 
-                return UpdatePlan.forDelete(gridTbl, sel.getSQL());
+                String selectSql = sel.getSQL();
+
+                DmlDistributedPlanInfo distributed = F.isEmpty(selectSql) ? null :
+                    checkPlanCanBeDistributed(idx, mvccEnabled, conn, fieldsQuery, loc, selectSql,
+                    tbl.dataTable().cacheName());
+
+                return new UpdatePlan(
+                    UpdateMode.DELETE,
+                    h2Tbl,
+                    selectSql,
+                    null,
+                    distributed
+                );
             }
         }
+    }
+
+    /**
+     * Prepare update plan for COPY command (AKA bulk load).
+     *
+     * @param cmd Bulk load command
+     * @return The update plan for this command.
+     * @throws IgniteCheckedException if failed.
+     */
+    @SuppressWarnings("ConstantConditions")
+    public static UpdatePlan planForBulkLoad(SqlBulkLoadCommand cmd, GridH2Table tbl) throws IgniteCheckedException {
+        GridH2RowDescriptor desc = tbl.rowDescriptor();
+
+        if (desc == null)
+            throw new IgniteSQLException("Row descriptor undefined for table '" + tbl.getName() + "'",
+                IgniteQueryErrorCode.NULL_TABLE_DESCRIPTOR);
+
+        GridCacheContext<?, ?> cctx = desc.context();
+
+        List<String> cols = cmd.columns();
+
+        if (cols == null)
+            throw new IgniteSQLException("Columns are not defined", IgniteQueryErrorCode.NULL_TABLE_DESCRIPTOR);
+
+        String[] colNames = new String[cols.size()];
+
+        int[] colTypes = new int[cols.size()];
+
+        int keyColIdx = -1;
+        int valColIdx = -1;
+
+        boolean hasKeyProps = false;
+        boolean hasValProps = false;
+
+        for (int i = 0; i < cols.size(); i++) {
+            String colName = cols.get(i);
+
+            colNames[i] = colName;
+
+            Column h2Col = tbl.getColumn(colName);
+
+            colTypes[i] = h2Col.getType();
+            int colId = h2Col.getColumnId();
+
+            if (desc.isKeyColumn(colId)) {
+                keyColIdx = i;
+                continue;
+            }
+
+            if (desc.isValueColumn(colId)) {
+                valColIdx = i;
+                continue;
+            }
+
+            GridQueryProperty prop = desc.type().property(colName);
+
+            assert prop != null : "Property '" + colName + "' not found.";
+
+            if (prop.key())
+                hasKeyProps = true;
+            else
+                hasValProps = true;
+        }
+
+        KeyValueSupplier keySupplier = createSupplier(cctx, desc.type(), keyColIdx, hasKeyProps,
+            true, false);
+        KeyValueSupplier valSupplier = createSupplier(cctx, desc.type(), valColIdx, hasValProps,
+            false, false);
+
+        return new UpdatePlan(
+            UpdateMode.BULK_LOAD,
+            tbl,
+            colNames,
+            colTypes,
+            keySupplier,
+            valSupplier,
+            keyColIdx,
+            valColIdx,
+            null,
+            true,
+            null,
+            0,
+            null,
+            null
+        );
     }
 
     /**
@@ -308,6 +580,7 @@ public final class UpdatePlanBuilder {
      * @param colIdx Column index if key or value is present in columns list, {@code -1} if it's not.
      * @param hasProps Whether column list affects individual properties of key or value.
      * @param key Whether supplier should be created for key or for value.
+     * @param forUpdate {@code FOR UPDATE} flag.
      * @return Closure returning key or value.
      * @throws IgniteCheckedException If failed.
      */
@@ -441,21 +714,6 @@ public final class UpdatePlanBuilder {
     }
 
     /**
-     * @param target Expression to extract the table from.
-     * @return Back end table for this element.
-     */
-    private static GridSqlTable gridTableForElement(GridSqlElement target) {
-        Set<GridSqlTable> tbls = new HashSet<>();
-
-        DmlAstUtils.collectAllGridTablesInTarget(target, tbls);
-
-        if (tbls.size() != 1)
-            throw new IgniteSQLException("Failed to determine target table", IgniteQueryErrorCode.TABLE_NOT_FOUND);
-
-        return tbls.iterator().next();
-    }
-
-    /**
      * Check that UPDATE statement affects no key columns.
      *
      * @param statement Statement.
@@ -473,13 +731,14 @@ public final class UpdatePlanBuilder {
         DmlAstUtils.collectAllGridTablesInTarget(updTarget, tbls);
 
         if (tbls.size() != 1)
-            throw new IgniteSQLException("Failed to determine target table for UPDATE", IgniteQueryErrorCode.TABLE_NOT_FOUND);
+            throw new IgniteSQLException("Failed to determine target table for UPDATE",
+                IgniteQueryErrorCode.TABLE_NOT_FOUND);
 
         GridSqlTable tbl = tbls.iterator().next();
 
         GridH2Table gridTbl = tbl.dataTable();
 
-        if (updateAffectsKeyColumns(gridTbl, update.set().keySet()))
+        if (gridTbl != null && updateAffectsKeyColumns(gridTbl, update.set().keySet()))
             throw new IgniteSQLException("SQL UPDATE can't modify key or its fields directly",
                 IgniteQueryErrorCode.KEY_UPDATE);
     }
@@ -508,6 +767,63 @@ public final class UpdatePlanBuilder {
             }
         }
         return false;
+    }
+
+    /**
+     * Checks whether the given update plan can be distributed and returns additional info.
+     *
+     * @param idx Indexing.
+     * @param mvccEnabled Mvcc flag.
+     * @param conn Connection.
+     * @param fieldsQry Initial update query.
+     * @param loc Local query flag.
+     * @param selectQry Derived select query.
+     * @param cacheName Cache name.
+     * @return distributed update plan info, or {@code null} if cannot be distributed.
+     * @throws IgniteCheckedException if failed.
+     */
+    private static DmlDistributedPlanInfo checkPlanCanBeDistributed(IgniteH2Indexing idx, boolean mvccEnabled,
+        Connection conn, SqlFieldsQuery fieldsQry, boolean loc, String selectQry, String cacheName)
+        throws IgniteCheckedException {
+        if (loc || (!mvccEnabled && !isSkipReducerOnUpdateQuery(fieldsQry)) || DmlUtils.isBatched(fieldsQry))
+            return null;
+
+        assert conn != null;
+
+        try {
+            // Get a new prepared statement for derived select query.
+            try (PreparedStatement stmt = conn.prepareStatement(selectQry)) {
+                idx.bindParameters(stmt, F.asList(fieldsQry.getArgs()));
+
+                GridCacheTwoStepQuery qry = GridSqlQuerySplitter.split(conn,
+                    GridSqlQueryParser.prepared(stmt),
+                    fieldsQry.getArgs(),
+                    fieldsQry.isCollocated(),
+                    fieldsQry.isDistributedJoins(),
+                    fieldsQry.isEnforceJoinOrder(),
+                    idx);
+
+                boolean distributed = qry.skipMergeTable() &&  qry.mapQueries().size() == 1 &&
+                    !qry.mapQueries().get(0).hasSubQueries();
+
+                return distributed ? new DmlDistributedPlanInfo(qry.isReplicatedOnly(),
+                    idx.collectCacheIds(CU.cacheId(cacheName), qry)): null;
+            }
+        }
+        catch (SQLException e) {
+            throw new IgniteCheckedException(e);
+        }
+    }
+
+    /**
+     * Checks whether query flags are compatible with server side update.
+     *
+     * @param qry Query.
+     * @return {@code true} if update can be distributed.
+     */
+    public static boolean isSkipReducerOnUpdateQuery(SqlFieldsQuery qry) {
+        return qry != null && !qry.isLocal() &&
+            qry instanceof SqlFieldsQueryEx && ((SqlFieldsQueryEx)qry).isSkipReducerOnUpdate();
     }
 
     /**

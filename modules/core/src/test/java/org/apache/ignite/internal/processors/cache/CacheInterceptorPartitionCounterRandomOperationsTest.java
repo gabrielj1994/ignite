@@ -122,13 +122,6 @@ public class CacheInterceptorPartitionCounterRandomOperationsTest extends GridCo
     }
 
     /** {@inheritDoc} */
-    @Override protected void afterTestsStopped() throws Exception {
-        stopAllGrids();
-
-        super.afterTestsStopped();
-    }
-
-    /** {@inheritDoc} */
     @Override protected void beforeTest() throws Exception {
         afterPutEvts.clear();
         afterRmvEvts.clear();
@@ -590,7 +583,7 @@ public class CacheInterceptorPartitionCounterRandomOperationsTest extends GridCo
                 affinity(cache).mapKeyToPrimaryAndBackups(key) :
                 Collections.singletonList(affinity(cache).mapKeyToNode(key));
 
-        assert nodes.size() > 0;
+        assert !nodes.isEmpty();
 
         List<BlockingQueue<Cache.Entry<TestKey, TestValue>>> queues = new ArrayList<>();
 

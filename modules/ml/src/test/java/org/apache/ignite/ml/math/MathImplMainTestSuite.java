@@ -26,8 +26,8 @@ import org.junit.runners.Suite;
 @RunWith(Suite.class)
 @Suite.SuiteClasses({
     MathImplLocalTestSuite.class,
-    MathImplDistributedTestSuite.class,
-    TracerTest.class
+    TracerTest.class,
+    BlasTest.class
 })
 public class MathImplMainTestSuite {
     // No-op.

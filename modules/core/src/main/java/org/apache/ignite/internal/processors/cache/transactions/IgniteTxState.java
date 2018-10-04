@@ -26,6 +26,7 @@ import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
 import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtTopologyFuture;
 import org.apache.ignite.internal.processors.cache.store.CacheStoreManager;
+import org.apache.ignite.internal.util.GridIntList;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.jetbrains.annotations.Nullable;
 
@@ -45,6 +46,13 @@ public interface IgniteTxState {
     @Nullable public Integer firstCacheId();
 
     /**
+     * Gets caches ids affected with current tx.
+     *
+     * @return tx cache ids.
+     */
+    @Nullable public GridIntList cacheIds();
+
+    /**
      * Unwind evicts for caches involved in this transaction.
      * @param cctx Grid cache shared context.
      */
@@ -59,7 +67,7 @@ public interface IgniteTxState {
     /**
      * @param cctx Awaits for previous async operations on active caches to be completed.
      */
-    public void awaitLastFut(GridCacheSharedContext cctx);
+    public void awaitLastFuture(GridCacheSharedContext cctx);
 
     /**
      * @param cctx Context.
@@ -83,7 +91,7 @@ public interface IgniteTxState {
      * @param tx Transaction.
      * @throws IgniteCheckedException If cache check failed.
      */
-    public void addActiveCache(GridCacheContext cacheCtx, boolean recovery, IgniteTxLocalAdapter tx)
+    public void addActiveCache(GridCacheContext cacheCtx, boolean recovery, IgniteTxAdapter tx)
         throws IgniteCheckedException;
 
     /**
@@ -180,4 +188,10 @@ public interface IgniteTxState {
      * @return {@code True} if transaction is empty.
      */
     public boolean empty();
+
+    /**
+     * @param cctx Context.
+     * @return {@code True} if MVCC mode is enabled for transaction.
+     */
+    public boolean mvccEnabled(GridCacheSharedContext cctx);
 }

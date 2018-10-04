@@ -18,6 +18,7 @@
 package org.apache.ignite.internal.processors.affinity;
 
 import org.apache.ignite.cluster.ClusterNode;
+import org.apache.ignite.internal.processors.cache.mvcc.MvccCoordinator;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
@@ -30,6 +31,7 @@ import java.util.UUID;
 /**
  *
  */
+@SuppressWarnings("ForLoopReplaceableByForEach")
 public class HistoryAffinityAssignment implements AffinityAssignment {
     /** */
     private final AffinityTopologyVersion topVer;
@@ -41,21 +43,21 @@ public class HistoryAffinityAssignment implements AffinityAssignment {
     private final List<List<ClusterNode>> idealAssignment;
 
     /** */
-    private final boolean clientEvtChange;
+    private final MvccCoordinator mvccCrd;
 
     /**
      * @param assign Assignment.
      */
-    public HistoryAffinityAssignment(GridAffinityAssignment assign) {
+    HistoryAffinityAssignment(GridAffinityAssignment assign) {
         this.topVer = assign.topologyVersion();
         this.assignment = assign.assignment();
         this.idealAssignment = assign.idealAssignment();
-        this.clientEvtChange = assign.clientEventChange();
+        this.mvccCrd = assign.mvccCoordinator();
     }
 
     /** {@inheritDoc} */
-    @Override public boolean clientEventChange() {
-        return clientEvtChange;
+    @Override public MvccCoordinator mvccCoordinator() {
+        return mvccCrd;
     }
 
     /** {@inheritDoc} */
@@ -94,6 +96,20 @@ public class HistoryAffinityAssignment implements AffinityAssignment {
             ids.add(nodes.get(i).id());
 
         return ids;
+    }
+
+    /** {@inheritDoc} */
+    @Override public Set<ClusterNode> nodes() {
+        Set<ClusterNode> res = new HashSet<>();
+
+        for (int p = 0; p < assignment.size(); p++) {
+            List<ClusterNode> nodes = assignment.get(p);
+
+            if (!F.isEmpty(nodes))
+                res.addAll(nodes);
+        }
+
+        return res;
     }
 
     /** {@inheritDoc} */

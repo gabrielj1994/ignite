@@ -22,13 +22,19 @@ package org.apache.ignite.console.agent.rest;
  */
 public class RestResult {
     /** REST http code. */
-    private final int status;
+    private int status;
 
     /** The field contains description of error if server could not handle the request. */
-    private final String error;
+    private String error;
 
     /** The field contains result of command. */
-    private final String data;
+    private String data;
+
+    /** Session token string representation. */
+    private String sesTok;
+
+    /** Flag of zipped data. */
+    private boolean zipped;
 
     /**
      * @param status REST http code.
@@ -54,8 +60,12 @@ public class RestResult {
      * @param data The field contains result of command.
      * @return Request result.
      */
-    public static RestResult success(String data) {
-        return new RestResult(0, null, data);
+    public static RestResult success(String data, String sesTok) {
+        RestResult res = new RestResult(0, null, data);
+
+        res.sesTok = sesTok;
+
+        return res;
     }
 
     /**
@@ -77,5 +87,28 @@ public class RestResult {
      */
     public String getData() {
         return data;
+    }
+
+    /**
+     * @return String representation of session token.
+     */
+    public String getSessionToken() {
+        return sesTok;
+    }
+
+    /**
+     * @param data Set zipped data.
+     */
+    public void zipData(String data) {
+        zipped = true;
+
+        this.data = data;
+    }
+
+    /**
+     * @return {@code true if data is zipped and Base64 encoded.}
+     */
+    public boolean isZipped() {
+        return zipped;
     }
 }

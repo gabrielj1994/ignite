@@ -18,10 +18,10 @@
 package org.apache.ignite.internal.processors.query.h2.database;
 
 import org.apache.ignite.IgniteCheckedException;
-import org.apache.ignite.IgniteException;
 import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.persistence.CacheDataRowAdapter;
+import org.apache.ignite.internal.processors.cache.tree.mvcc.data.MvccDataRow;
 import org.apache.ignite.internal.processors.query.h2.opt.GridH2Row;
 import org.apache.ignite.internal.processors.query.h2.opt.GridH2RowDescriptor;
 
@@ -61,20 +61,23 @@ public class H2RowFactory {
 
         rowBuilder.initFromLink(cctx.group(), CacheDataRowAdapter.RowData.FULL);
 
-        GridH2Row row;
+        GridH2Row row = rowDesc.createRow(rowBuilder);
 
-        try {
-            row = rowDesc.createRow(rowBuilder.key(),
-                PageIdUtils.partId(link), rowBuilder.value(), rowBuilder.version(), rowBuilder.expireTime());
-
-            row.link = link;
-        }
-        catch (IgniteCheckedException e) {
-            throw new IgniteException(e);
-        }
-
-        assert row.ver != null;
+        assert row.version() != null;
 
         return row;
+    }
+
+    /**
+     * @param link Link.
+     * @param mvccCrdVer Mvcc coordinator version.
+     * @param mvccCntr Mvcc counter.
+     * @param mvccOpCntr Mvcc operation counter.
+     * @return Row.
+     * @throws IgniteCheckedException If failed.
+     */
+    public GridH2Row getMvccRow(long link, long mvccCrdVer, long mvccCntr, int mvccOpCntr) throws IgniteCheckedException {
+        return rowDesc.createRow(new MvccDataRow(cctx.group(),0, link,
+            PageIdUtils.partId(PageIdUtils.pageId(link)),null, mvccCrdVer, mvccCntr, mvccOpCntr));
     }
 }

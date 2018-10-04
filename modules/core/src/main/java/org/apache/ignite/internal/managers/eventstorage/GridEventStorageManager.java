@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReadWriteLock;
@@ -68,7 +69,6 @@ import org.apache.ignite.spi.eventstorage.EventStorageSpi;
 import org.apache.ignite.spi.eventstorage.NoopEventStorageSpi;
 import org.apache.ignite.spi.eventstorage.memory.MemoryEventStorageSpi;
 import org.jetbrains.annotations.Nullable;
-import org.jsr166.ConcurrentHashMap8;
 
 import static org.apache.ignite.events.EventType.EVTS_ALL;
 import static org.apache.ignite.events.EventType.EVTS_DISCOVERY_ALL;
@@ -84,7 +84,7 @@ import static org.apache.ignite.internal.managers.communication.GridIoPolicy.PUB
  */
 public class GridEventStorageManager extends GridManagerAdapter<EventStorageSpi> {
     /** Local event listeners. */
-    private final ConcurrentMap<Integer, Listeners> lsnrs = new ConcurrentHashMap8<>();
+    private final ConcurrentMap<Integer, Listeners> lsnrs = new ConcurrentHashMap<>();
 
     /** Busy lock to control activity of threads. */
     private final ReadWriteLock busyLock = new ReentrantReadWriteLock();
@@ -531,6 +531,20 @@ public class GridEventStorageManager extends GridManagerAdapter<EventStorageSpi>
         assert type > 0 : "Invalid event type: " + type;
 
         return type < len ? recordableEvts[type] : isUserRecordable0(type);
+    }
+
+    /**
+     * Checks whether this event type has any listener.
+     *
+     * @param type Event type to check.
+     * @return Whether or not this event type has any listener.
+     */
+    public boolean hasListener(int type) {
+        assert type > 0 : "Invalid event type: " + type;
+
+        Listeners listeners = lsnrs.get(type);
+
+        return (listeners != null) && (!F.isEmpty(listeners.highPriorityLsnrs) || !F.isEmpty(listeners.lsnrs));
     }
 
     /**
@@ -1454,7 +1468,7 @@ public class GridEventStorageManager extends GridManagerAdapter<EventStorageSpi>
         }
 
         /** {@inheritDoc} */
-        public IgnitePredicate<? extends Event> listener() {
+        @Override public IgnitePredicate<? extends Event> listener() {
             return lsnr;
         }
 

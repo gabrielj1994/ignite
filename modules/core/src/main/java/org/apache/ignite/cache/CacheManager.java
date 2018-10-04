@@ -43,7 +43,7 @@ import org.apache.ignite.internal.GridKernalState;
 import org.apache.ignite.internal.IgniteKernal;
 import org.apache.ignite.internal.IgnitionEx;
 import org.apache.ignite.internal.mxbean.IgniteStandardMXBean;
-import org.apache.ignite.internal.processors.cache.IgniteCacheProxy;
+import org.apache.ignite.internal.processors.cache.GatewayProtectedCacheProxy;
 import org.apache.ignite.internal.util.IgniteUtils;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
@@ -177,7 +177,7 @@ public class CacheManager implements javax.cache.CacheManager {
             if (res == null)
                 throw new CacheException();
 
-            ((IgniteCacheProxy<K, V>)res).setCacheManager(this);
+            ((GatewayProtectedCacheProxy<K, V>)res).setCacheManager(this);
 
             if (igniteCacheCfg.isManagementEnabled())
                 enableManagement(cacheName, true);
@@ -219,17 +219,7 @@ public class CacheManager implements javax.cache.CacheManager {
         kernalGateway.readLock();
 
         try {
-            IgniteCache<K, V> cache = getCache0(cacheName);
-
-            if (cache != null) {
-                if(cache.getConfiguration(Configuration.class).getKeyType() != Object.class)
-                    throw new IllegalArgumentException();
-
-                if(cache.getConfiguration(Configuration.class).getValueType() != Object.class)
-                    throw new IllegalArgumentException();
-            }
-
-            return cache;
+            return getCache0(cacheName);
         }
         finally {
             kernalGateway.readUnlock();
@@ -258,8 +248,7 @@ public class CacheManager implements javax.cache.CacheManager {
 
         try {
             if (kernalGateway.getState() != GridKernalState.STARTED)
-                return Collections.emptySet(); // javadoc of #getCacheNames() says that IllegalStateException should be
-                                               // thrown but CacheManagerTest.close_cachesEmpty() require empty collection.
+                throw new IllegalStateException();
 
             Collection<String> res = new ArrayList<>();
 
@@ -351,14 +340,12 @@ public class CacheManager implements javax.cache.CacheManager {
             if (cache == null)
                 throw new CacheException("Cache not found: " + cacheName);
 
-            CacheConfiguration cfg = cache.getConfiguration(CacheConfiguration.class);
-
             if (enabled)
                 registerCacheObject(cache.mxBean(), cacheName, CACHE_STATISTICS);
             else
                 unregisterCacheObject(cacheName, CACHE_STATISTICS);
 
-            cfg.setStatisticsEnabled(enabled);
+            ignite.context().cache().cache(cacheName).context().statisticsEnabled(enabled);
         }
         finally {
             kernalGateway.readUnlock();

@@ -17,20 +17,24 @@
 
 package org.apache.ignite.internal.processors.odbc.jdbc;
 
+import java.io.IOException;
 import org.apache.ignite.binary.BinaryObjectException;
 import org.apache.ignite.internal.binary.BinaryReaderExImpl;
 import org.apache.ignite.internal.binary.BinaryWriterExImpl;
+import org.apache.ignite.internal.processors.odbc.ClientListenerProtocolVersion;
 import org.apache.ignite.internal.processors.odbc.SqlListenerUtils;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.jetbrains.annotations.Nullable;
 
+import static org.apache.ignite.internal.processors.odbc.jdbc.JdbcConnectionContext.VER_2_7_0;
+
 /**
- * SQL listener query execute request.
+ * JDBC query execute request.
  */
 public class JdbcQueryExecuteRequest extends JdbcRequest {
-    /** Cache name. */
+    /** Schema name. */
     private String schemaName;
 
     /** Fetch size. */
@@ -47,21 +51,31 @@ public class JdbcQueryExecuteRequest extends JdbcRequest {
     @GridToStringInclude(sensitive = true)
     private Object[] args;
 
+    /** Expected statement type. */
+    private JdbcStatementType stmtType;
+
+    /** Client auto commit flag state. */
+    private boolean autoCommit;
+
     /**
      */
-    public JdbcQueryExecuteRequest() {
+    JdbcQueryExecuteRequest() {
         super(QRY_EXEC);
+
+        autoCommit = true;
     }
 
     /**
+     * @param stmtType Expected statement type.
      * @param schemaName Cache name.
      * @param pageSize Fetch size.
      * @param maxRows Max rows.
+     * @param autoCommit Connection auto commit flag state.
      * @param sqlQry SQL query.
      * @param args Arguments list.
      */
-    public JdbcQueryExecuteRequest(String schemaName, int pageSize, int maxRows, String sqlQry,
-        Object[] args) {
+    public JdbcQueryExecuteRequest(JdbcStatementType stmtType, String schemaName, int pageSize, int maxRows,
+        boolean autoCommit, String sqlQry, Object[] args) {
         super(QRY_EXEC);
 
         this.schemaName = F.isEmpty(schemaName) ? null : schemaName;
@@ -69,6 +83,8 @@ public class JdbcQueryExecuteRequest extends JdbcRequest {
         this.maxRows = maxRows;
         this.sqlQry = sqlQry;
         this.args = args;
+        this.stmtType = stmtType;
+        this.autoCommit = autoCommit;
     }
 
     /**
@@ -100,15 +116,30 @@ public class JdbcQueryExecuteRequest extends JdbcRequest {
     }
 
     /**
-     * @return Cache name.
+     * @return Schema name.
      */
     @Nullable public String schemaName() {
         return schemaName;
     }
 
+    /**
+     * @return Expected statement type.
+     */
+    public JdbcStatementType expectedStatementType() {
+        return stmtType;
+    }
+
+    /**
+     * @return Auto commit flag.
+     */
+    boolean autoCommit() {
+        return autoCommit;
+    }
+
     /** {@inheritDoc} */
-    @Override public void writeBinary(BinaryWriterExImpl writer) throws BinaryObjectException {
-        super.writeBinary(writer);
+    @Override public void writeBinary(BinaryWriterExImpl writer,
+        ClientListenerProtocolVersion ver) throws BinaryObjectException {
+        super.writeBinary(writer, ver);
 
         writer.writeString(schemaName);
         writer.writeInt(pageSize);
@@ -121,11 +152,18 @@ public class JdbcQueryExecuteRequest extends JdbcRequest {
             for (Object arg : args)
                 SqlListenerUtils.writeObject(writer, arg, false);
         }
+
+        if (ver.compareTo(VER_2_7_0) >= 0)
+            writer.writeBoolean(autoCommit);
+
+        writer.writeByte((byte)stmtType.ordinal());
     }
 
     /** {@inheritDoc} */
-    @Override public void readBinary(BinaryReaderExImpl reader) throws BinaryObjectException {
-        super.readBinary(reader);
+    @SuppressWarnings("SimplifiableIfStatement")
+    @Override public void readBinary(BinaryReaderExImpl reader,
+        ClientListenerProtocolVersion ver) throws BinaryObjectException {
+        super.readBinary(reader, ver);
 
         schemaName = reader.readString();
         pageSize = reader.readInt();
@@ -138,6 +176,19 @@ public class JdbcQueryExecuteRequest extends JdbcRequest {
 
         for (int i = 0; i < argsNum; ++i)
             args[i] = SqlListenerUtils.readObject(reader, false);
+
+        if (ver.compareTo(VER_2_7_0) >= 0)
+            autoCommit = reader.readBoolean();
+
+        try {
+            if (reader.available() > 0)
+                stmtType = JdbcStatementType.fromOrdinal(reader.readByte());
+            else
+                stmtType = JdbcStatementType.ANY_STATEMENT_TYPE;
+        }
+        catch (IOException e) {
+            throw new BinaryObjectException(e);
+        }
     }
 
     /** {@inheritDoc} */

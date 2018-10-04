@@ -15,15 +15,58 @@
  * limitations under the License.
  */
 
+import _ from 'lodash';
 import controller from './input-dialog.controller';
 import templateUrl from './input-dialog.tpl.pug';
+import {CancellationError} from 'app/errors/CancellationError';
 
 export default class InputDialog {
     static $inject = ['$modal', '$q'];
 
+    /**
+     * @param {mgcrea.ngStrap.modal.IModalService} $modal
+     * @param {ng.IQService} $q
+     */
     constructor($modal, $q) {
         this.$modal = $modal;
         this.$q = $q;
+    }
+
+    /**
+     * Fabric for creating modal instance with different input types.
+     *
+     * @param {Object} args Options for rendering inputs:
+     * @param {'text'|'number'} args.mode Input type.
+     * @param {String} args.title Dialog title.
+     * @param {String} args.label Input field label.
+     * @param {String} args.tip Message for tooltip in label.
+     * @param {String|Number} args.value Default value.
+     * @param {String} args.placeholder Placeholder for input.
+     * @param {Function} [args.toValidValue] Validator function.
+     * @param {Number} args.min Min value for number input.
+     * @param {Number} args.max Max value for number input.
+     * @param {String} args.postfix Postfix for units in numer input.
+     * @return {Promise.<String>} User input.
+     */
+    dialogFabric(args) {
+        const deferred = this.$q.defer();
+
+        const modal = this.$modal({
+            templateUrl,
+            resolve: {
+                deferred: () => deferred,
+                ui: () => args
+            },
+            controller,
+            controllerAs: 'ctrl'
+        });
+
+        const modalHide = modal.hide;
+
+        modal.hide = () => deferred.reject(new CancellationError());
+
+        return deferred.promise
+            .finally(modalHide);
     }
 
     /**
@@ -33,32 +76,11 @@ export default class InputDialog {
      * @param {String} label Input field label.
      * @param {String} value Default value.
      * @param {Function} [toValidValue] Validator function.
-     * @returns {Promise.<String>} User input.
+     * @param {'text'|'number'} mode Input type.
+     * @returns {ng.IPromise<string>} User input.
      */
-    input(title, label, value, toValidValue) {
-        const deferred = this.$q.defer();
-
-        const modal = this.$modal({
-            templateUrl,
-            resolve: {
-                deferred: () => deferred,
-                ui: () => ({
-                    title,
-                    label,
-                    value,
-                    toValidValue
-                })
-            },
-            controller,
-            controllerAs: 'ctrl'
-        });
-
-        const modalHide = modal.hide;
-
-        modal.hide = () => deferred.reject('cancelled');
-
-        return deferred.promise
-            .finally(modalHide);
+    input(title, label, value, toValidValue, mode = 'text') {
+        return this.dialogFabric({title, label, value, toValidValue, mode});
     }
 
     /**
@@ -66,7 +88,7 @@ export default class InputDialog {
      *
      * @param {String} srcName Name of source object.
      * @param {Array.<String>} names List of already exist names.
-     * @returns {Promise.<String>} New name
+     * @returns {ng.IPromise<string>} New name.
      */
     clone(srcName, names) {
         const uniqueName = (value) => {
@@ -83,5 +105,15 @@ export default class InputDialog {
         };
 
         return this.input('Clone', 'New name', uniqueName(srcName), uniqueName);
+    }
+
+    /**
+     * Open input dialog to configure custom number value.
+     *
+     * @param {Object} options Object with settings for rendering number input.
+     * @returns {Promise.<String>} User input.
+     */
+    number(options) {
+        return this.dialogFabric({mode: 'number', ...options});
     }
 }

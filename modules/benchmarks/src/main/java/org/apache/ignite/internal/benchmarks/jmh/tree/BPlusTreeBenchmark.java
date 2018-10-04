@@ -21,7 +21,7 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.ignite.IgniteCheckedException;
-import org.apache.ignite.configuration.MemoryPolicyConfiguration;
+import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.internal.benchmarks.jmh.JmhAbstractBenchmark;
 import org.apache.ignite.internal.benchmarks.jmh.runner.JmhIdeBenchmarkRunner;
 import org.apache.ignite.internal.mem.unsafe.UnsafeMemoryProvider;
@@ -30,7 +30,7 @@ import org.apache.ignite.internal.pagemem.PageIdAllocator;
 import org.apache.ignite.internal.pagemem.PageMemory;
 import org.apache.ignite.internal.pagemem.PageUtils;
 import org.apache.ignite.internal.pagemem.impl.PageMemoryNoStoreImpl;
-import org.apache.ignite.internal.processors.cache.persistence.MemoryMetricsImpl;
+import org.apache.ignite.internal.processors.cache.persistence.DataRegionMetricsImpl;
 import org.apache.ignite.internal.processors.cache.persistence.tree.BPlusTree;
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.BPlusIO;
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.BPlusInnerIO;
@@ -137,7 +137,7 @@ public class BPlusTreeBenchmark extends JmhAbstractBenchmark {
     public void tearDown() throws Exception {
         tree.destroy();
 
-        pageMem.stop();
+        pageMem.stop(true);
     }
 
     /**
@@ -176,7 +176,7 @@ public class BPlusTreeBenchmark extends JmhAbstractBenchmark {
         TestTree(ReuseList reuseList, int cacheId, PageMemory pageMem, long metaPageId)
             throws IgniteCheckedException {
             super("test", cacheId, pageMem, null, new AtomicLong(), metaPageId, reuseList,
-                new IOVersions<>(new LongInnerIO()), new IOVersions<>(new LongLeafIO()));
+                new IOVersions<>(new LongInnerIO()), new IOVersions<>(new LongLeafIO()), null);
 
             PageIO.registerTest(latestInnerIO(), latestLeafIO());
 
@@ -192,7 +192,7 @@ public class BPlusTreeBenchmark extends JmhAbstractBenchmark {
         }
 
         /** {@inheritDoc} */
-        @Override protected Long getRow(BPlusIO<Long> io, long pageAddr, int idx, Object ignore)
+        @Override public Long getRow(BPlusIO<Long> io, long pageAddr, int idx, Object ignore)
             throws IgniteCheckedException {
             assert io.canGetRow() : io;
 
@@ -210,14 +210,14 @@ public class BPlusTreeBenchmark extends JmhAbstractBenchmark {
         for (int i = 0; i < sizes.length; i++)
             sizes[i] = 1024 * MB / CPUS;
 
-        MemoryPolicyConfiguration plcCfg = new MemoryPolicyConfiguration().setMaxSize(1024 * MB);
+        DataRegionConfiguration plcCfg = new DataRegionConfiguration().setMaxSize(1024 * MB);
 
         PageMemory pageMem = new PageMemoryNoStoreImpl(new JavaLogger(),
             new UnsafeMemoryProvider(new JavaLogger()),
             null,
             PAGE_SIZE,
             plcCfg,
-            new MemoryMetricsImpl(plcCfg),
+            new DataRegionMetricsImpl(plcCfg),
             false);
 
         pageMem.start();
