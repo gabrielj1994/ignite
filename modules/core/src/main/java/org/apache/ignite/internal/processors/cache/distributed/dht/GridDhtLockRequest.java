@@ -34,6 +34,7 @@ import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
 import org.apache.ignite.internal.processors.cache.distributed.GridDistributedLockRequest;
 import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
+import org.apache.ignite.internal.processors.trace.EventsTrace;
 import org.apache.ignite.internal.util.GridLeanMap;
 import org.apache.ignite.internal.util.tostring.GridToStringExclude;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
@@ -147,7 +148,8 @@ public class GridDhtLockRequest extends GridDistributedLockRequest {
         boolean skipStore,
         boolean storeUsed,
         boolean keepBinary,
-        boolean addDepInfo
+        boolean addDepInfo,
+        EventsTrace evtsTrace
     ) {
         super(cacheId,
             nodeId,
@@ -164,13 +166,14 @@ public class GridDhtLockRequest extends GridDistributedLockRequest {
             txSize,
             skipStore,
             keepBinary,
-            addDepInfo);
+            addDepInfo,
+            evtsTrace);
 
         this.topVer = topVer;
 
         storeUsed(storeUsed);
 
-        nearKeys = nearCnt == 0 ? Collections.<KeyCacheObject>emptyList() : new ArrayList<KeyCacheObject>(nearCnt);
+        nearKeys = nearCnt == 0 ? Collections.emptyList() : new ArrayList<>(nearCnt);
         invalidateEntries = new BitSet(dhtCnt == 0 ? nearCnt : dhtCnt);
 
         assert miniId != null;
@@ -179,6 +182,8 @@ public class GridDhtLockRequest extends GridDistributedLockRequest {
         this.subjId = subjId;
         this.taskNameHash = taskNameHash;
         this.accessTtl = accessTtl;
+
+        recordTracePoint(TracePoint.DHT_LOCK_REQUEST_CREATED);
     }
 
     /**

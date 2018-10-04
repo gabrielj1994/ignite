@@ -29,6 +29,8 @@ import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
 import org.apache.ignite.internal.processors.cache.distributed.GridDistributedLockRequest;
 import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
+import org.apache.ignite.internal.processors.trace.EventsTrace;
+import org.apache.ignite.internal.processors.trace.IgniteTraceAware.TracePoint;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.lang.IgniteUuid;
@@ -141,7 +143,8 @@ public class GridNearLockRequest extends GridDistributedLockRequest {
         boolean keepBinary,
         boolean firstClientReq,
         boolean nearCache,
-        boolean addDepInfo
+        boolean addDepInfo,
+        EventsTrace evtsTrace
     ) {
         super(
             cacheId,
@@ -159,7 +162,8 @@ public class GridNearLockRequest extends GridDistributedLockRequest {
             txSize,
             skipStore,
             keepBinary,
-            addDepInfo);
+            addDepInfo,
+            evtsTrace);
 
         assert topVer.compareTo(AffinityTopologyVersion.ZERO) > 0;
 
@@ -175,6 +179,8 @@ public class GridNearLockRequest extends GridDistributedLockRequest {
         setFlag(firstClientReq, FIRST_CLIENT_REQ_FLAG_MASK);
         setFlag(retVal, NEED_RETURN_VALUE_FLAG_MASK);
         setFlag(nearCache, NEAR_CACHE_FLAG_MASK);
+
+        recordTracePoint(TracePoint.NEAR_LOCK_REQUEST_CREATED);
     }
 
     /**

@@ -355,7 +355,7 @@ public class GridDhtTxLocal extends GridDhtTxLocalAdapter implements GridCacheMa
             return chainOnePhasePrepare(fut);
         }
 
-        this.eventsTrace = eventsTrace;
+        eventsTrace = req.nodeTrace();
 
         if (state() != PREPARING) {
             if (!state(PREPARING)) {

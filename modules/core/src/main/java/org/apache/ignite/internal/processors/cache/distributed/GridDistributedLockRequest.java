@@ -29,6 +29,8 @@ import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
 import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
+import org.apache.ignite.internal.processors.trace.EventsTrace;
+import org.apache.ignite.internal.processors.trace.IgniteTraceAware;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.lang.IgniteUuid;
@@ -41,7 +43,7 @@ import org.jetbrains.annotations.Nullable;
 /**
  * Lock request message.
  */
-public class GridDistributedLockRequest extends GridDistributedBaseMessage {
+public class GridDistributedLockRequest extends GridDistributedBaseMessage implements IgniteTraceAware {
     /** */
     private static final long serialVersionUID = 0L;
 
@@ -99,6 +101,9 @@ public class GridDistributedLockRequest extends GridDistributedBaseMessage {
     /** Additional flags. */
     private byte flags;
 
+    /** */
+    private EventsTrace evtsTrace;
+
     /**
      * Empty constructor.
      */
@@ -139,7 +144,8 @@ public class GridDistributedLockRequest extends GridDistributedBaseMessage {
         int txSize,
         boolean skipStore,
         boolean keepBinary,
-        boolean addDepInfo
+        boolean addDepInfo,
+        EventsTrace evtsTrace
     ) {
         super(lockVer, keyCnt, addDepInfo);
 
@@ -163,6 +169,21 @@ public class GridDistributedLockRequest extends GridDistributedBaseMessage {
 
         skipStore(skipStore);
         keepBinary(keepBinary);
+
+        this.evtsTrace = evtsTrace;
+    }
+
+    /** {@inheritDoc} */
+    @Override public void recordTracePoint(TracePoint pt) {
+        if (evtsTrace != null)
+            evtsTrace.recordTracePoint(pt);
+    }
+
+    /**
+     * @return Node trace.
+     */
+    public EventsTrace nodeTrace() {
+        return evtsTrace;
     }
 
     /**

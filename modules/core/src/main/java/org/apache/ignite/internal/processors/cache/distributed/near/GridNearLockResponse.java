@@ -26,6 +26,7 @@ import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheObject;
 import org.apache.ignite.internal.processors.cache.distributed.GridDistributedLockResponse;
 import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
+import org.apache.ignite.internal.processors.trace.EventsTrace;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.lang.IgniteUuid;
@@ -90,9 +91,10 @@ public class GridNearLockResponse extends GridDistributedLockResponse {
         int cnt,
         Throwable err,
         AffinityTopologyVersion clientRemapVer,
-        boolean addDepInfo
+        boolean addDepInfo,
+        EventsTrace evtsTrace
     ) {
-        super(cacheId, lockVer, futId, cnt, err, addDepInfo);
+        super(cacheId, lockVer, futId, cnt, err, addDepInfo, evtsTrace);
 
         assert miniId != 0;
 
@@ -104,6 +106,8 @@ public class GridNearLockResponse extends GridDistributedLockResponse {
 
         if (filterRes)
             this.filterRes = new boolean[cnt];
+
+        recordTracePoint(TracePoint.NEAR_LOCK_RESPONSE_CREATED);
     }
 
     /**
