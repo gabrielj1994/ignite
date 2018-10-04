@@ -1172,6 +1172,8 @@ public abstract class GridDhtTransactionalCacheAdapter<K, V> extends GridDhtCach
                     top.readUnlock();
             }
 
+            tx.nodeTrace(req.nodeTrace());
+
             boolean timedOut = false;
 
             for (KeyCacheObject key : keys) {

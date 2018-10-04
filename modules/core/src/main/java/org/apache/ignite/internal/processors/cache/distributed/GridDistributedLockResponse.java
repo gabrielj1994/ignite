@@ -154,6 +154,7 @@ public class GridDistributedLockResponse extends GridDistributedBaseMessage impl
         this.cacheId = cacheId;
         this.futId = futId;
         this.err = err;
+        this.evtsTrace = evtsTrace;
 
         vals = new ArrayList<>(cnt);
     }

@@ -51,6 +51,8 @@ public class GridCacheTxTracingSelfTest extends GridCommonAbstractTest {
 
         cfg.setCacheConfiguration(ccfg);
 
+        cfg.setConsistentId(igniteInstanceName);
+
         if (getTestIgniteInstanceName(GRID_CNT - 1).equals(igniteInstanceName))
             cfg.setClientMode(true);
 
@@ -72,16 +74,14 @@ public class GridCacheTxTracingSelfTest extends GridCommonAbstractTest {
 
         IgniteCache<Object, Object> cache = client.cache(DEFAULT_CACHE_NAME);
 
-        for (int r = 0; r < 1000; r++) {
-            try (Transaction tx = client.transactions().txStart(OPTIMISTIC, REPEATABLE_READ)) {
-                for (int i = 0; i < 10; i++)
-                    cache.put(i, i);
+        try (Transaction tx = client.transactions().txStart(PESSIMISTIC, REPEATABLE_READ)) {
+            for (int i = 0; i < 9; i++)
+                cache.put(i, i);
 
-                tx.commit();
+            tx.commit();
 
-                if (r == 999)
-                    System.out.println("A");
-            }
+            if (GRID_CNT == 4)
+                System.out.println("A");
         }
     }
 }

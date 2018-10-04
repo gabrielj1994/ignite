@@ -505,6 +505,7 @@ public class IgniteTxHandler {
             if (req.explicitLock())
                 tx.explicitLock(true);
 
+            tx.nodeTrace(req.nodeTrace());
             tx.transactionNodes(req.transactionNodes());
 
             if (req.near())
