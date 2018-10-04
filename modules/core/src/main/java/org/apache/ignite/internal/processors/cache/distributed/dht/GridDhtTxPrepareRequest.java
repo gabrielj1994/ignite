@@ -486,12 +486,6 @@ public class GridDhtTxPrepareRequest extends GridDistributedTxPrepareRequest {
 
                 writer.incrementState();
 
-            case 29:
-                if (!writer.writeBoolean("skipCompletedVers", skipCompletedVers))
-                    return false;
-
-                writer.incrementState();
-
             case 30:
                 if (!writer.writeUuid("subjId", subjId))
                     return false;
@@ -604,14 +598,6 @@ public class GridDhtTxPrepareRequest extends GridDistributedTxPrepareRequest {
 
             case 29:
                 preloadKeys = reader.readBitSet("preloadKeys");
-
-                if (!reader.isLastRead())
-                    return false;
-
-                reader.incrementState();
-
-            case 29:
-                skipCompletedVers = reader.readBoolean("skipCompletedVers");
 
                 if (!reader.isLastRead())
                     return false;

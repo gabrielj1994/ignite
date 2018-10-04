@@ -634,7 +634,8 @@ public class IgniteTxHandler {
             e,
             null,
             req.onePhaseCommit(),
-            req.deployInfo() != null);
+            req.deployInfo() != null,
+            null);
 
         try {
             ctx.io().send(node.id(), res, req.policy());

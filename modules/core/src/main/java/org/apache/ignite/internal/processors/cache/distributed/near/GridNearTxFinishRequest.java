@@ -198,12 +198,6 @@ public class GridNearTxFinishRequest extends GridDistributedTxFinishRequest {
 
                 writer.incrementState();
 
-            case 22:
-                if (!writer.writeMessage("mvccSnapshot", mvccSnapshot))
-                    return false;
-
-                writer.incrementState();
-
         }
 
         return true;
@@ -222,14 +216,6 @@ public class GridNearTxFinishRequest extends GridDistributedTxFinishRequest {
         switch (reader.state()) {
             case 22:
                 miniId = reader.readInt("miniId");
-
-                if (!reader.isLastRead())
-                    return false;
-
-                reader.incrementState();
-
-            case 22:
-                mvccSnapshot = reader.readMessage("mvccSnapshot");
 
                 if (!reader.isLastRead())
                     return false;

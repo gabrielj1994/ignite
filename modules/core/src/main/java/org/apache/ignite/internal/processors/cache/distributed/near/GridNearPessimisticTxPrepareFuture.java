@@ -234,7 +234,7 @@ public class GridNearPessimisticTxPrepareFuture extends GridNearTxPrepareFutureA
             false,
             true,
             tx.activeCachesDeploymentEnabled(),
-            cctx.kernalContext().trace().tracingEnabled() ? new EventsTrace() : null));
+            cctx.kernalContext().trace().tracingEnabled() ? new EventsTrace() : null);
 
         req.queryUpdate(m.queryUpdate());
 

@@ -578,7 +578,7 @@ public class GridNearOptimisticTxPrepareFuture extends GridNearOptimisticTxPrepa
                     m.clientFirst(),
                     true,
                     tx.activeCachesDeploymentEnabled(),
-                    cctx.kernalContext().trace().tracingEnabled() ? new EventsTrace() : null));
+                    cctx.kernalContext().trace().tracingEnabled() ? new EventsTrace() : null);
 
                 for (IgniteTxEntry txEntry : m.entries()) {
                     if (txEntry.op() == TRANSFORM)
